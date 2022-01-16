@@ -559,6 +559,8 @@ defm lto_legacy_pass_manager: BB<"lto-legacy-pass-manager",
   "Use the new pass manager in LLVM">;
 def lto_newpm_passes: JJ<"lto-newpm-passes=">,
   HelpText<"Passes to run during LTO">;
+def lto_load_pass_plugin: JJ<"lto-load-pass-plugin=">,
+  HelpText<"Pass modules to dynamically load">;
 def lto_O: JJ<"lto-O">, MetaVarName<"<opt-level>">,
   HelpText<"Optimization level for LTO">;
 def lto_partitions: JJ<"lto-partitions=">,

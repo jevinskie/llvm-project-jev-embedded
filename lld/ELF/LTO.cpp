@@ -148,6 +148,7 @@ static lto::Config createConfig() {
 
   c.SampleProfile = std::string(config->ltoSampleProfile);
   c.UseNewPM = config->ltoNewPassManager;
+  c.PassPlugins = config->ltoPassPlugins;
   c.DebugPassManager = config->ltoDebugPassManager;
   c.DwoDir = std::string(config->dwoDir);
 

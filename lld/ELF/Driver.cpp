@@ -1063,6 +1063,7 @@ static void readConfigs(opt::InputArgList &args) {
       args.hasFlag(OPT_no_lto_legacy_pass_manager, OPT_lto_legacy_pass_manager,
                    LLVM_ENABLE_NEW_PASS_MANAGER);
   config->ltoNewPmPasses = args.getLastArgValue(OPT_lto_newpm_passes);
+  config->ltoPassPlugins = args.getAllArgValues(OPT_lto_load_pass_plugin);
   config->ltoWholeProgramVisibility =
       args.hasFlag(OPT_lto_whole_program_visibility,
                    OPT_no_lto_whole_program_visibility, false);

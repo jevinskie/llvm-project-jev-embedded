@@ -1,0 +1,2 @@
+~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/clang -o fact-lib.elf fact-lib.c -I /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/include -L /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/lib -Wl,-r -v -Wl,--lto-load-pass-plugin=$HOME/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib
+

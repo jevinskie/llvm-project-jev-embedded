@@ -39,6 +39,8 @@ if(${LLVM_BUILD_RUNTIME})
   endif()
 endif()
 
+add_llvm_external_project(jev-embedded-customs)
+
 add_llvm_external_project(dragonegg)
 add_llvm_external_project(openmp)
 
