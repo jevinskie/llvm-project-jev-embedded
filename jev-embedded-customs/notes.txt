@@ -1,2 +1,12 @@
 ~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/clang -o fact-lib.elf fact-lib.c -I /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/include -L /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/lib -Wl,-r -v -Wl,--lto-load-pass-plugin=$HOME/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib
 
+~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/opt -o fact-lib-o3.ll -S fact-lib.ll -load-pass-plugin ~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib --passes='default<Os>'
+
+~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/opt -O3 -o fact-lib-o3.ll -S fact-lib.ll -load ~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib -embcust
+^ crashes
+
+~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/clang -o fact.elf fact-lib.o fact-main.o -nostdlib -I /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/include -L /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/lib -Wl,-r -v -Wl,--lto-load-pass-plugin=$HOME/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib
+
+~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/clang -o fact.elf fact-lib.o fact-main.o -nostdlib -I /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/include -L /opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/lib -Wl,-r -v -Wl,--lto-load-pass-plugin=$HOME/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib -Xlinker --lto-newpm-passes='default<Os>'
+
+~/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/ld.lld fact-lib.o fact-main.o -r --lto-load-pass-plugin=/Users/jevin/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/jev-embedded-customs.dylib -Bstatic -L/opt/aarch64/aarch64-elf-llvm-2021-12-26/lib/clang-runtimes/aarch64_/lib -L/Users/jevin/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/bin/../lib/clang-runtimes/aarch64-none-elf/lib -L/Users/jevin/code/xtool/LLVM-embedded-toolchain-for-Arm/build-HEAD/llvm/lib/clang/14.0.0/lib/baremetal -o fact.elf --lto-newpm-passes='default<Os>,embcust'

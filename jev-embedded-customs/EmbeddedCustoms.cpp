@@ -23,6 +23,15 @@ bool runEmbeddedCustoms(Function &F) {
   return false;
 }
 
+bool runEmbeddedCustoms(Module &M) {
+  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
+  if (Wave) {
+    errs() << "Bye: ";
+    errs().write_escaped(M.getName()) << '\n';
+  }
+  return false;
+}
+
 struct LegacyEmbeddedCustoms : public FunctionPass {
   static char ID;
   LegacyEmbeddedCustoms() : FunctionPass(ID) {}
@@ -39,13 +48,19 @@ struct EmbeddedCustoms : PassInfoMixin<EmbeddedCustoms> {
       return PreservedAnalyses::all();
     return PreservedAnalyses::none();
   }
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
+    if (!runEmbeddedCustoms(M))
+      return PreservedAnalyses::all();
+    return PreservedAnalyses::none();
+  }
 };
 
 } // namespace
 
 char LegacyEmbeddedCustoms::ID = 0;
 
-static RegisterPass<LegacyEmbeddedCustoms> X("embcust", "Embedded Customs Pass",
+static RegisterPass<LegacyEmbeddedCustoms> X("embcust", "Embedded Customs pass",
                                              false /* Only looks at CFG */,
                                              false /* Analysis Pass */);
 
@@ -65,6 +80,7 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
   return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustoms", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
+            errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
             PB.registerVectorizerStartEPCallback(
                 [](llvm::FunctionPassManager &PM, OptimizationLevel Level) {
                   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
@@ -80,6 +96,22 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   }
                   return false;
                 });
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, llvm::ModulePassManager &PM,
+                   ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
+                  if (Name == "embcust") {
+                    PM.addPass(EmbeddedCustoms());
+                    return true;
+                  }
+                  return false;
+                });
+            PB.registerPipelineStartEPCallback(
+                [&](ModulePassManager &PM, OptimizationLevel Level) {
+                  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
+                  PM.addPass(EmbeddedCustoms());
+                });
+            PB.printPassNames(errs());
           }};
 }
 
