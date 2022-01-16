@@ -531,7 +531,9 @@ using ::truncl _LIBCPP_USING_IF_EXISTS;
 #if _LIBCPP_STD_VER > 14
 inline _LIBCPP_INLINE_VISIBILITY float       hypot(       float x,       float y,       float z ) { return sqrt(x*x + y*y + z*z); }
 inline _LIBCPP_INLINE_VISIBILITY double      hypot(      double x,      double y,      double z ) { return sqrt(x*x + y*y + z*z); }
+#if !(defined(__NEWLIB__) && (defined(_LDBLD_EQ_DBL) || !defined(__CYGWIN__)))
 inline _LIBCPP_INLINE_VISIBILITY long double hypot( long double x, long double y, long double z ) { return sqrt(x*x + y*y + z*z); }
+#endif
 
 template <class _A1, class _A2, class _A3>
 inline _LIBCPP_INLINE_VISIBILITY
@@ -633,8 +635,10 @@ lerp(float __a, float __b, float __t)                   _NOEXCEPT { return __ler
 constexpr double
 lerp(double __a, double __b, double __t)                _NOEXCEPT { return __lerp(__a, __b, __t); }
 
+#if !(defined(__NEWLIB__) && (defined(_LDBLD_EQ_DBL) || !defined(__CYGWIN__)))
 constexpr long double
 lerp(long double __a, long double __b, long double __t) _NOEXCEPT { return __lerp(__a, __b, __t); }
+#endif
 
 #endif // _LIBCPP_STD_VER > 17
 

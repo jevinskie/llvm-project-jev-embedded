@@ -67,6 +67,7 @@ inline _LIBCPP_INLINE_VISIBILITY int isxdigit_l(int c, locale_t) {
   return ::isxdigit(c);
 }
 
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 inline _LIBCPP_INLINE_VISIBILITY int iswalnum_l(wint_t c, locale_t) {
   return ::iswalnum(c);
 }
@@ -114,6 +115,7 @@ inline _LIBCPP_INLINE_VISIBILITY int iswupper_l(wint_t c, locale_t) {
 inline _LIBCPP_INLINE_VISIBILITY int iswxdigit_l(wint_t c, locale_t) {
   return ::iswxdigit(c);
 }
+#endif // _LIBCPP_HAS_NO_WIDE_CHARACTERS
 
 inline _LIBCPP_INLINE_VISIBILITY int toupper_l(int c, locale_t) {
   return ::toupper(c);
@@ -123,6 +125,7 @@ inline _LIBCPP_INLINE_VISIBILITY int tolower_l(int c, locale_t) {
   return ::tolower(c);
 }
 
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 inline _LIBCPP_INLINE_VISIBILITY wint_t towupper_l(wint_t c, locale_t) {
   return ::towupper(c);
 }
@@ -130,6 +133,7 @@ inline _LIBCPP_INLINE_VISIBILITY wint_t towupper_l(wint_t c, locale_t) {
 inline _LIBCPP_INLINE_VISIBILITY wint_t towlower_l(wint_t c, locale_t) {
   return ::towlower(c);
 }
+#endif // _LIBCPP_HAS_NO_WIDE_CHARACTERS
 
 inline _LIBCPP_INLINE_VISIBILITY int strcoll_l(const char *s1, const char *s2,
                                                locale_t) {
@@ -147,6 +151,7 @@ inline _LIBCPP_INLINE_VISIBILITY size_t strftime_l(char *s, size_t max,
   return ::strftime(s, max, format, tm);
 }
 
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 inline _LIBCPP_INLINE_VISIBILITY int wcscoll_l(const wchar_t *ws1,
                                                const wchar_t *ws2, locale_t) {
   return ::wcscoll(ws1, ws2);
@@ -156,6 +161,7 @@ inline _LIBCPP_INLINE_VISIBILITY size_t wcsxfrm_l(wchar_t *dest, const wchar_t *
                                                   size_t n, locale_t) {
   return ::wcsxfrm(dest, src, n);
 }
+#endif // _LIBCPP_HAS_NO_WIDE_CHARACTERS
 
 #ifdef __cplusplus
 }

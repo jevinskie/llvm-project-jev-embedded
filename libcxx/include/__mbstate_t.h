@@ -31,6 +31,9 @@
 #   include <bits/types/mbstate_t.h> // works on most Unixes
 #elif __has_include(<sys/_types/_mbstate_t.h>)
 #   include <sys/_types/_mbstate_t.h> // works on Darwin
+#elif __has_include(<sys/_types.h>) && __has_include(<_newlib_version.h>)
+#   include <sys/_types.h>
+typedef _mbstate_t mbstate_t;
 #else
 #   error "The library was configured without support for wide-characters, but we don't know how to get the definition of mbstate_t without <wchar.h> on your platform."
 #endif

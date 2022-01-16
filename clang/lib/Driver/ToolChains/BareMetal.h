@@ -75,6 +75,8 @@ public:
   void AddLinkRuntimeLib(const llvm::opt::ArgList &Args,
                          llvm::opt::ArgStringList &CmdArgs) const;
   std::string computeSysRoot() const override;
+
+  bool HasNativeLLVMSupport() const override;
 };
 
 } // namespace toolchains

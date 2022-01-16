@@ -15,7 +15,14 @@ extern "C" {
 #endif
 
 // Patch over lack of extended locale support
+
+#if !defined(__NEWLIB__) || __NEWLIB__ < 2 || \
+   __NEWLIB__ == 2 && __NEWLIB_MINOR__ < 5
 typedef void *locale_t;
+#else
+#   include <sys/_locale.h>
+#endif
+
 static inline locale_t duplocale(locale_t) {
   return NULL;
 }

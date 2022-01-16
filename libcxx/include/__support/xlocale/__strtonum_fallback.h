@@ -44,6 +44,7 @@ strtoull_l(const char *nptr, char **endptr, int base, locale_t) {
   return ::strtoull(nptr, endptr, base);
 }
 
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 inline _LIBCPP_INLINE_VISIBILITY long long
 wcstoll_l(const wchar_t *nptr, wchar_t **endptr, int base, locale_t) {
   return ::wcstoll(nptr, endptr, base);
@@ -58,6 +59,7 @@ inline _LIBCPP_INLINE_VISIBILITY long double wcstold_l(const wchar_t *nptr,
                                                        wchar_t **endptr, locale_t) {
   return ::wcstold(nptr, endptr);
 }
+#endif // _LIBCPP_HAS_NO_WIDE_CHARACTERS
 
 #ifdef __cplusplus
 }

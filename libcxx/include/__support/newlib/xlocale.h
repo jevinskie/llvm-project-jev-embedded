@@ -13,14 +13,18 @@
 
 #include <cstdlib>
 #include <clocale>
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 #include <cwctype>
+#endif
 #include <ctype.h>
-#if !defined(__NEWLIB__) || __NEWLIB__ < 2 || \
-    __NEWLIB__ == 2 && __NEWLIB_MINOR__ < 5
+#if ((!defined(__NEWLIB__) || __NEWLIB__ < 2 || \
+   __NEWLIB__ == 2 && __NEWLIB_MINOR__ < 5) || \
+   defined(_LIBCPP_HAS_LOCALIZATION_STUBS)) && \
+   !(defined(__NEWLIB__) && (_POSIX_C_SOURCE < 200809))
 #include <__support/xlocale/__nop_locale_mgmt.h>
 #include <__support/xlocale/__posix_l_fallback.h>
-#include <__support/xlocale/__strtonum_fallback.h>
 #endif
+#include <__support/xlocale/__strtonum_fallback.h>
 
 #endif // _NEWLIB_VERSION
 

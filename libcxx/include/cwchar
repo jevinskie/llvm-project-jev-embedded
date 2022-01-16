@@ -103,7 +103,9 @@ size_t wcsrtombs(char* restrict dst, const wchar_t** restrict src, size_t len,
 */
 
 #include <__config>
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 #include <cwctype>
+#endif // _LIBCPP_HAS_NO_WIDE_CHARACTERS
 #include <wchar.h>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)

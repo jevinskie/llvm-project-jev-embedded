@@ -318,10 +318,17 @@ inline _LIBCPP_INLINE_VISIBILITY void __libcpp_deallocate_unsized(void* __ptr, s
 // chances are that you want to use `__libcpp_allocate` instead.
 //
 // Returns the allocated memory, or `nullptr` on failure.
+
+#ifdef __NEWLIB__
+extern "C" void *memalign (size_t align, size_t sz);
+#endif
+
 inline _LIBCPP_INLINE_VISIBILITY
 void* __libcpp_aligned_alloc(std::size_t __alignment, std::size_t __size) {
 #if defined(_LIBCPP_MSVCRT_LIKE)
   return ::_aligned_malloc(__size, __alignment);
+#elif defined(__NEWLIB__)
+  return memalign(__alignment, __size);
 #else
   void* __result = nullptr;
   (void)::posix_memalign(&__result, __alignment, __size);

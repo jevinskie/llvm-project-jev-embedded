@@ -13,6 +13,7 @@
 #ifndef LIBUNWIND_CONFIG_H
 #define LIBUNWIND_CONFIG_H
 
+#include <alloca.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>

@@ -301,6 +301,8 @@ void BareMetal::AddLinkRuntimeLib(const ArgList &Args,
   llvm_unreachable("Unhandled RuntimeLibType.");
 }
 
+bool BareMetal::HasNativeLLVMSupport() const { return true; }
+
 void baremetal::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                      const InputInfo &Output,
                                      const InputInfoList &Inputs,

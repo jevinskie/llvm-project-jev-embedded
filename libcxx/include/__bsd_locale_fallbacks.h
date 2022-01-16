@@ -123,8 +123,23 @@ int __libcpp_asprintf_l(char **__s, locale_t __l, const char *__format, ...) {
     va_list __va;
     va_start(__va, __format);
     __libcpp_locale_guard __current(__l);
+#if defined(__NEWLIB__) && !__GNU_VISIBLE
+    va_list __va_dup;
+    va_copy(__va_dup, __va);
+    int __len = vsnprintf(nullptr, 0, __format, __va);
+    va_end(__va);
+
+    if (__len < 0) return __len;
+
+    *__s = (char *)malloc(__len + 1u);
+    if (!__s) return -1;
+
+    int __res = vsnprintf(*__s, __len + 1u, __format, __va_dup);
+    va_end(__va_dup);
+#else
     int __res = vasprintf(__s, __format, __va);
     va_end(__va);
+#endif
     return __res;
 }
 
