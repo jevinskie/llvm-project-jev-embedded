@@ -48,6 +48,8 @@ bool isBitcodeWriterPass(Pass *P);
 /// Note that this is intended for use with the new pass manager. To construct
 /// a pass for the legacy pass manager, use the function above.
 class BitcodeWriterPass : public PassInfoMixin<BitcodeWriterPass> {
+  std::error_code FDEC;
+  std::unique_ptr<raw_fd_ostream> FDOS;
   raw_ostream &OS;
   bool ShouldPreserveUseListOrder;
   bool EmitSummaryIndex;
@@ -67,6 +69,9 @@ public:
                              bool EmitModuleHash = false)
       : OS(OS), ShouldPreserveUseListOrder(ShouldPreserveUseListOrder),
   EmitSummaryIndex(EmitSummaryIndex), EmitModuleHash(EmitModuleHash) {}
+
+  /// Construct a bitcode writer pass to dump to a timestamped file
+  BitcodeWriterPass();
 
   /// Run the bitcode writer pass, and output the module to the selected
   /// output stream.

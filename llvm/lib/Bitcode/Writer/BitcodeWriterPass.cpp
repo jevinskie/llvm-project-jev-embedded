@@ -11,13 +11,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Bitcode/BitcodeWriterPass.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/FormatVariadic.h"
 using namespace llvm;
+
+#include <chrono>
 
 PreservedAnalyses BitcodeWriterPass::run(Module &M, ModuleAnalysisManager &AM) {
   const ModuleSummaryIndex *Index =
@@ -25,6 +29,15 @@ PreservedAnalyses BitcodeWriterPass::run(Module &M, ModuleAnalysisManager &AM) {
                        : nullptr;
   WriteBitcodeToFile(M, OS, ShouldPreserveUseListOrder, Index, EmitModuleHash);
   return PreservedAnalyses::all();
+}
+
+static std::string dump_file_name() {
+  const auto now = std::chrono::system_clock::now().time_since_epoch().count();
+  return formatv("write-bitcode-{0}.bc", now).str();
+}
+
+BitcodeWriterPass::BitcodeWriterPass() : FDOS{std::make_unique<raw_fd_ostream>(dump_file_name(), FDEC)}, OS{*FDOS} {
+  assert(!EC);
 }
 
 namespace {
