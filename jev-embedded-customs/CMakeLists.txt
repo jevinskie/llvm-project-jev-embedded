@@ -11,6 +11,11 @@ add_llvm_pass_plugin(jev-embedded-customs
 
 target_link_libraries(jev-embedded-customs PRIVATE fmt)
 
+set_target_properties(jev-embedded-customs PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
 # install(TARGETS jev-embedded-customs)
 
 # install(TARGETS ${name} RUNTIME DESTINATION lib)

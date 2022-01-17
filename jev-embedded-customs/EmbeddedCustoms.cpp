@@ -7,30 +7,64 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 using namespace llvm;
 
-static cl::opt<bool> Wave("wave-goodbye", cl::init(false),
-                          cl::desc("wave good bye"));
+static cl::opt<std::string>
+    exported_syms_file("exported-syms",
+                       cl::desc("file with list of exported symbols"),
+                       cl::Required);
 
-namespace {
+namespace jev {
 
-bool runEmbeddedCustoms(Module &M) {
+static std::vector<std::string> getLines(StringRef path) {
+  std::vector<std::string> ret;
+  SmallVector<StringRef, 0> arr;
+  auto mb = MemoryBuffer::getFile(path);
+  if (!mb) {
+    return ret;
+  }
+  (*mb)->getBuffer().split(arr, '\n');
+
+  for (StringRef s : arr) {
+    s = s.trim();
+    if (!s.empty() && s[0] != '#')
+      ret.push_back(s.str());
+  }
+  return ret;
+}
+
+static bool runEmbeddedCustoms(Module &M) {
   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-  errs() << "EmbeddedCustoms: Wave: " << Wave << "\n";
   errs() << "runEmbeddedCustoms: name: ";
   errs().write_escaped(M.getName()) << '\n';
-  for (const auto &global : M.globals()) {
-    errs() << "global: ";
-    errs().write_escaped(global.getName()) << '\n';
+
+  const auto exported_sym_names = getLines(exported_syms_file);
+  for (const auto &exp_sym : exported_sym_names) {
+    errs() << "exp_sym: " << exp_sym << '\n';
   }
-  for (auto &func : M.functions()) {
-    errs() << "func: ";
-    errs().write_escaped(func.getName()) << '\n';
-    if (func.getName() != "main") {
-      func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
-      const auto old_linkage = func.getLinkage();
+  const std::set<std::string> exported_syms{exported_sym_names.begin(),
+                                            exported_sym_names.end()};
+
+  // std::set<std::string> exported_syms;
+  // for (const auto &exp_sym : exported_sym_names) {
+  //   exported_syms.insert(exp_sym);
+  // }
+
+  fmt::print(stderr, "exp_sym set: {} vec: {}\n",
+             fmt::join(exported_syms, ", "),
+             fmt::join(exported_sym_names, ", "));
+  // for (const std::string &exp_sym : exported_syms) {
+  //   errs() << "exp_sym set: " << exp_sym << '\n';
+  // }
+
+  for (auto &gv : M.global_values()) {
+    errs() << "gv: ";
+    errs().write_escaped(gv.getName()) << '\n';
+    if (!exported_syms.contains(gv.getName().str())) {
+      // func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
+      const auto old_linkage = gv.getLinkage();
       auto new_linkage = old_linkage;
       switch (old_linkage) {
       case GlobalValue::LinkageTypes::ExternalLinkage:
@@ -40,7 +74,11 @@ bool runEmbeddedCustoms(Module &M) {
         // assert(!"unimplemented");
         break;
       }
-      func.setLinkage(new_linkage);
+      if (new_linkage != old_linkage) {
+        errs() << "changing " << gv.getName() << " linkage from " << old_linkage
+               << " to " << new_linkage << '\n';
+      }
+      gv.setLinkage(new_linkage);
     }
   }
   return true;
@@ -54,7 +92,7 @@ struct EmbeddedCustoms : PassInfoMixin<EmbeddedCustoms> {
   }
 };
 
-} // namespace
+} // namespace jev
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
@@ -64,7 +102,7 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                 [](StringRef Name, llvm::ModulePassManager &PM,
                    ArrayRef<llvm::PassBuilder::PipelineElement>) {
                   if (Name == "embcust") {
-                    PM.addPass(EmbeddedCustoms());
+                    PM.addPass(jev::EmbeddedCustoms());
                     return true;
                   }
                   return false;
