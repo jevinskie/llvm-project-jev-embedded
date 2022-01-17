@@ -187,6 +187,7 @@ struct Configuration {
   bool ltoEmitAsm;
   bool ltoNewPassManager;
   std::vector<std::string> ltoPassPlugins;
+  std::vector<std::string> ltoPassPluginOpts;
   bool ltoUniqueBasicBlockSectionNames;
   bool ltoWholeProgramVisibility;
   bool mergeArmExidx;

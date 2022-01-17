@@ -7,12 +7,18 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
+#include <fmt/core.h>
+
 using namespace llvm;
+
+static cl::opt<bool> Wave("wave-goodbye", cl::init(false),
+                          cl::desc("wave good bye"));
 
 namespace {
 
 bool runEmbeddedCustoms(Module &M) {
   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
+  errs() << "EmbeddedCustoms: Wave: " << Wave << "\n";
   errs() << "runEmbeddedCustoms: name: ";
   errs().write_escaped(M.getName()) << '\n';
   for (const auto &global : M.globals()) {

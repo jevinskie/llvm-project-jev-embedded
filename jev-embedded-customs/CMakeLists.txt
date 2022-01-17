@@ -1,10 +1,15 @@
+add_subdirectory(3rdparty)
+
 add_llvm_pass_plugin(jev-embedded-customs
     EmbeddedCustoms.cpp
     DEPENDS
     intrinsics_gen
+    fmt
     SUBPROJECT
     jev-embedded-customs
 )
+
+target_link_libraries(jev-embedded-customs PRIVATE fmt)
 
 # install(TARGETS jev-embedded-customs)
 

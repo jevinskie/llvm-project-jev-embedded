@@ -161,7 +161,20 @@ Error Config::addSaveTemps(std::string OutputFileName,
   llvm::PassPluginLibraryInfo get##Ext##PluginInfo();
 #include "llvm/Support/Extension.def"
 
+// FIXME: this is a copy-pasta hack
+static void parseClangOption(StringRef opt) {
+  std::string err;
+  raw_string_ostream os(err);
+
+  const char *argv[] = {"libLTO", opt.data()};
+  if (cl::ParseCommandLineOptions(2, argv, "", &os))
+    return;
+  os.flush();
+  report_fatal_error("Parsing '" + opt + "': " + StringRef(err).trim(), false);
+}
+
 static void RegisterPassPlugins(ArrayRef<std::string> PassPlugins,
+                                ArrayRef<std::string> PassPluginOpts,
                                 PassBuilder &PB) {
 #define HANDLE_EXTENSION(Ext)                                                  \
   get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);
@@ -174,6 +187,10 @@ static void RegisterPassPlugins(ArrayRef<std::string> PassPlugins,
       errs() << "Failed to load passes from '" << PluginFN
              << "'. Request ignored.\n";
       continue;
+    }
+
+    for (const auto &opt : PassPluginOpts) {
+      parseClangOption(opt);
     }
 
     PassPlugin->registerPassBuilderCallbacks(PB);
@@ -242,7 +259,7 @@ static void runNewPMPasses(const Config &Conf, Module &Mod, TargetMachine *TM,
   SI.registerCallbacks(PIC, &FAM);
   PassBuilder PB(TM, Conf.PTO, PGOOpt, &PIC);
 
-  RegisterPassPlugins(Conf.PassPlugins, PB);
+  RegisterPassPlugins(Conf.PassPlugins, Conf.PassPluginOpts, PB);
 
   std::unique_ptr<TargetLibraryInfoImpl> TLII(
       new TargetLibraryInfoImpl(Triple(TM->getTargetTriple())));

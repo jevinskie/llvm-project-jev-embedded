@@ -1,0 +1,3 @@
+[submodule "jev-embedded-customs/3rdparty/fmt"]
+	path = jev-embedded-customs/3rdparty/fmt
+	url = https://github.com/fmtlib/fmt

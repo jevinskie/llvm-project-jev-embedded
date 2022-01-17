@@ -1064,6 +1064,7 @@ static void readConfigs(opt::InputArgList &args) {
                    LLVM_ENABLE_NEW_PASS_MANAGER);
   config->ltoNewPmPasses = args.getLastArgValue(OPT_lto_newpm_passes);
   config->ltoPassPlugins = args.getAllArgValues(OPT_lto_load_pass_plugin);
+  config->ltoPassPluginOpts = args.getAllArgValues(OPT_mllvm_plugin);
   config->ltoWholeProgramVisibility =
       args.hasFlag(OPT_lto_whole_program_visibility,
                    OPT_no_lto_whole_program_visibility, false);

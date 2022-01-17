@@ -48,6 +48,7 @@ struct Config {
   TargetOptions Options;
   std::vector<std::string> MAttrs;
   std::vector<std::string> PassPlugins;
+  std::vector<std::string> PassPluginOpts;
   /// For adding passes that run right before codegen.
   std::function<void(legacy::PassManager &)> PreCodeGenPassesHook;
   Optional<Reloc::Model> RelocModel = Reloc::PIC_;
