@@ -9,47 +9,39 @@
 
 using namespace llvm;
 
-static cl::opt<bool> Wave("wave-goodbye", cl::init(true),
-                          cl::desc("wave good bye"));
-
 namespace {
-
-bool runEmbeddedCustoms(Function &F) {
-  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-  if (Wave) {
-    errs() << "Bye: ";
-    errs().write_escaped(F.getName()) << '\n';
-  }
-  return false;
-}
 
 bool runEmbeddedCustoms(Module &M) {
   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-  if (Wave) {
-    errs() << "Bye: ";
-    errs().write_escaped(M.getName()) << '\n';
+  errs() << "runEmbeddedCustoms: name: ";
+  errs().write_escaped(M.getName()) << '\n';
+  for (const auto &global : M.globals()) {
+    errs() << "global: ";
+    errs().write_escaped(global.getName()) << '\n';
   }
-  return false;
+  for (auto &func : M.functions()) {
+    errs() << "func: ";
+    errs().write_escaped(func.getName()) << '\n';
+    if (func.getName() != "main") {
+      func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
+      const auto old_linkage = func.getLinkage();
+      auto new_linkage = old_linkage;
+      switch (old_linkage) {
+      case GlobalValue::LinkageTypes::ExternalLinkage:
+        new_linkage = GlobalValue::LinkageTypes::InternalLinkage;
+        break;
+      default:
+        // assert(!"unimplemented");
+        break;
+      }
+      func.setLinkage(new_linkage);
+    }
+  }
+  return true;
 }
 
-struct LegacyEmbeddedCustoms : public FunctionPass {
-  static char ID;
-  LegacyEmbeddedCustoms() : FunctionPass(ID) {}
-  bool runOnFunction(Function &F) override {
-    errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-    return runEmbeddedCustoms(F);
-  }
-};
-
 struct EmbeddedCustoms : PassInfoMixin<EmbeddedCustoms> {
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
-    errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-    if (!runEmbeddedCustoms(F))
-      return PreservedAnalyses::all();
-    return PreservedAnalyses::none();
-  }
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
     if (!runEmbeddedCustoms(M))
       return PreservedAnalyses::all();
     return PreservedAnalyses::none();
@@ -58,67 +50,27 @@ struct EmbeddedCustoms : PassInfoMixin<EmbeddedCustoms> {
 
 } // namespace
 
-char LegacyEmbeddedCustoms::ID = 0;
-
-static RegisterPass<LegacyEmbeddedCustoms> X("embcust", "Embedded Customs pass",
-                                             false /* Only looks at CFG */,
-                                             false /* Analysis Pass */);
-
-/* Legacy PM Registration */
-static llvm::RegisterStandardPasses
-    RegisterEmbeddedCustoms(llvm::PassManagerBuilder::EP_VectorizerStart,
-                            [](const llvm::PassManagerBuilder &Builder,
-                               llvm::legacy::PassManagerBase &PM) {
-                              errs()
-                                  << "EmbeddedCustoms: " << __PRETTY_FUNCTION__
-                                  << "\n";
-                              PM.add(new LegacyEmbeddedCustoms());
-                            });
-
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
-  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
   return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustoms", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-            PB.registerVectorizerStartEPCallback(
-                [](llvm::FunctionPassManager &PM, OptimizationLevel Level) {
-                  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-                  PM.addPass(EmbeddedCustoms());
-                });
-            PB.registerPipelineParsingCallback(
-                [](StringRef Name, llvm::FunctionPassManager &PM,
-                   ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-                  if (Name == "embcust") {
-                    PM.addPass(EmbeddedCustoms());
-                    return true;
-                  }
-                  return false;
-                });
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, llvm::ModulePassManager &PM,
                    ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
                   if (Name == "embcust") {
                     PM.addPass(EmbeddedCustoms());
                     return true;
                   }
                   return false;
                 });
-            PB.registerPipelineStartEPCallback(
-                [&](ModulePassManager &PM, OptimizationLevel Level) {
-                  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-                  PM.addPass(EmbeddedCustoms());
-                });
-            PB.printPassNames(errs());
+            // PB.registerPipelineStartEPCallback(
+            //     [&](ModulePassManager &PM, OptimizationLevel Level) {
+            //       PM.addPass(EmbeddedCustoms());
+            //     });
           }};
 }
 
-#ifndef LLVM_BYE_LINK_INTO_TOOLS
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
   return getEmbeddedCustomsPluginInfo();
 }
-#endif
