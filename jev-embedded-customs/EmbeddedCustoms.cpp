@@ -41,44 +41,45 @@ static bool runEmbeddedCustoms(Module &M) {
   errs().write_escaped(M.getName()) << '\n';
 
   const auto exported_sym_names = getLines(exported_syms_file);
-  for (const auto &exp_sym : exported_sym_names) {
-    errs() << "exp_sym: " << exp_sym << '\n';
-  }
-  const std::set<std::string> exported_syms{exported_sym_names.begin(),
-                                            exported_sym_names.end()};
+  const std::set<std::string> exported_syms{exported_sym_names.cbegin(),
+                                            exported_sym_names.cend()};
+  fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
 
-  // std::set<std::string> exported_syms;
-  // for (const auto &exp_sym : exported_sym_names) {
-  //   exported_syms.insert(exp_sym);
-  // }
-
-  fmt::print(stderr, "exp_sym set: {} vec: {}\n",
-             fmt::join(exported_syms, ", "),
-             fmt::join(exported_sym_names, ", "));
-  // for (const std::string &exp_sym : exported_syms) {
-  //   errs() << "exp_sym set: " << exp_sym << '\n';
-  // }
-
-  for (auto &gv : M.global_values()) {
-    errs() << "gv: ";
-    errs().write_escaped(gv.getName()) << '\n';
-    if (!exported_syms.contains(gv.getName().str())) {
+  for (auto &GV : M.global_values()) {
+    errs() << "GV: ";
+    errs().write_escaped(GV.getName()) << '\n';
+    if (!exported_syms.contains(GV.getName().str())) {
+      using LT = GlobalValue::LinkageTypes;
       // func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
-      const auto old_linkage = gv.getLinkage();
+      const auto old_linkage = GV.getLinkage();
       auto new_linkage = old_linkage;
-      switch (old_linkage) {
-      case GlobalValue::LinkageTypes::ExternalLinkage:
-        new_linkage = GlobalValue::LinkageTypes::InternalLinkage;
-        break;
-      default:
-        // assert(!"unimplemented");
-        break;
+
+      if (!GV.isDeclaration()) {
+        switch (old_linkage) {
+        case LT::LinkOnceAnyLinkage:
+        case LT::CommonLinkage:
+        case LT::ExternalWeakLinkage:
+        case LT::WeakAnyLinkage:
+        case LT::ExternalLinkage:
+        case LT::AvailableExternallyLinkage:
+        case LT::LinkOnceODRLinkage:
+        case LT::WeakODRLinkage:
+        case LT::AppendingLinkage:
+          new_linkage = LT::InternalLinkage;
+          break;
+        case LT::PrivateLinkage:
+          // do nothing
+          break;
+        default:
+          llvm_unreachable("unhandled linkage type");
+        }
       }
+
       if (new_linkage != old_linkage) {
-        errs() << "changing " << gv.getName() << " linkage from " << old_linkage
+        errs() << "changing " << GV.getName() << " linkage from " << old_linkage
                << " to " << new_linkage << '\n';
       }
-      gv.setLinkage(new_linkage);
+      GV.setLinkage(new_linkage);
     }
   }
   return true;
@@ -116,5 +117,6 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
+  assert(!"fuckabees!");
   return getEmbeddedCustomsPluginInfo();
 }
