@@ -1,5 +1,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Object/Archive.h"
 #include "llvm/Pass.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -22,6 +23,8 @@ static cl::opt<std::string>
 
 namespace jev {
 
+static ExitOnError ExitOnErr;
+
 static std::vector<std::string> getLines(StringRef path) {
   std::vector<std::string> ret;
   SmallVector<StringRef, 0> arr;
@@ -39,6 +42,26 @@ static std::vector<std::string> getLines(StringRef path) {
   return ret;
 }
 
+static bool link_bc_archive(Module &M, StringRef ar_path) {
+  fmt::print(stderr, "linking in {:s}\n", ar_path.str());
+  auto ar_bin = llvm::object::createBinary(ar_path);
+  if (Error E = ar_bin.takeError()) ExitOnErr(std::move(E));
+  if (!ar_bin->getBinary()->isArchive()) {
+    report_fatal_error("binary isn't an archive file");
+  }
+  const auto *ar = cast<const llvm::object::Archive>(ar_bin->getBinary());
+  Error Err = Error::success();
+  for (const auto &child : ar->children(Err)) {
+    ExitOnErr(std::move(Err));
+    auto name = child.getName();
+    if (Error E = name.takeError()) ExitOnErr(std::move(E));
+    fmt::print(stderr, "libgcc child: {:s}\n", std::string{name.get()});
+  }
+  std::unique_ptr<Module> Result(new Module("ArchiveModule", M.getContext()));
+  return true;
+
+}
+
 static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
   errs() << "runEmbeddedCustoms: name: ";
@@ -48,7 +71,10 @@ static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
   const auto exported_sym_names = getLines(exported_syms_file);
   const std::set<std::string> exported_syms{exported_sym_names.cbegin(),
                                             exported_sym_names.cend()};
-  fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
+  // fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
+  if (ShouldLinkLibgcc) {
+    link_bc_archive(M, libgcc);
+  }
 
   for (auto &GV : M.global_values()) {
     // errs() << "GV: ";
@@ -98,7 +124,9 @@ public:
   EmbeddedCustomsPass() { }
   EmbeddedCustomsPass(bool link_libgcc)
       : ShouldLinkLibgcc(link_libgcc) {
-        assert(!ShouldLinkLibgcc || !libgcc.empty());
+        if(ShouldLinkLibgcc &&libgcc.empty()) {
+          report_fatal_error("Specify a libgcc path with -embcust-libgcc <PATH>");
+        }
       }
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
@@ -120,7 +148,7 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   if (Name == "embcust") {
                     PM.addPass(jev::EmbeddedCustomsPass());
                     return true;
-                  } else if (Name.startswith("embcust<") && Name.endswith(">")) {
+                  } else if (Name == "embcust<link_libgcc>") {
                     PM.addPass(jev::EmbeddedCustomsPass(true));
                     return true;
                   }
