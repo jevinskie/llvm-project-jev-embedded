@@ -145,19 +145,19 @@ static bool link_bc_archive(Module &M, StringRef ar_path) {
 }
 
 static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
-  errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-  errs() << "runEmbeddedCustoms: name: ";
-  errs().write_escaped(M.getName()) << '\n';
-  errs() << "runEmbeddedCustoms: link_libgcc: " << ShouldLinkLibgcc << '\n';
+  // errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
+  // errs() << "runEmbeddedCustoms: name: ";
+  // errs().write_escaped(M.getName()) << '\n';
+  // errs() << "runEmbeddedCustoms: link_libgcc: " << ShouldLinkLibgcc << '\n';
 
   const auto exported_sym_names = getLines(exported_syms_file);
   const std::set<std::string> exported_syms{exported_sym_names.cbegin(),
                                             exported_sym_names.cend()};
-  fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
-  if (ShouldLinkLibgcc) {
-    fmt::print(stderr, "linking in libgcc\n", fmt::join(exported_syms, ", "));
-    // link_bc_archive(M, libgcc);
-  }
+  // fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
+  // if (ShouldLinkLibgcc) {
+  //   fmt::print(stderr, "linking in libgcc\n", fmt::join(exported_syms, ", "));
+  //   link_bc_archive(M, libgcc);
+  // }
 
   static std::set<std::string> skiplist{
       "llvm.used",
@@ -168,7 +168,7 @@ static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
     // errs().write_escaped(GV.getName()) << '\n';
 
     if (libcallRoutines.contains(GV.getName().str())) {
-      errs() << "GV: " << GV.getName() << " is a libcall\n";
+      // errs() << "GV: " << GV.getName() << " is a libcall\n";
       appendToUsed(M, ArrayRef{&GV});
     }
 
