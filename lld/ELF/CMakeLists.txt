@@ -64,3 +64,8 @@ add_lld_library(lldELF
   ELFOptionsTableGen
   intrinsics_gen
   )
+
+target_link_options(lldELF
+  PUBLIC
+  -Wl,-u,__ZN4llvm6LinkerC1ERNS_6ModuleE
+  )
