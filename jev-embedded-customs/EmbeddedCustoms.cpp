@@ -10,6 +10,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <fmt/format.h>
 
@@ -26,12 +27,22 @@ static cl::opt<std::string>
 
 namespace jev {
 
-static std::set<std::string> libcallRoutineNames{
+static const char *libcallRoutineNames[] = {
 #define HANDLE_LIBCALL(code, name) name,
 #include "llvm/IR/RuntimeLibcalls.def"
 #undef HANDLE_LIBCALL
 };
 
+static std::set<std::string> getLibcallRoutines() {
+  std::set<std::string> res;
+  for (const auto name : libcallRoutineNames) {
+    if (name)
+      res.insert(name);
+  }
+  return res;
+}
+
+static const auto libcallRoutines{getLibcallRoutines()};
 
 static void EoE(Error &&E) {
   std::string str;
@@ -148,10 +159,21 @@ static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
     // link_bc_archive(M, libgcc);
   }
 
+  static std::set<std::string> skiplist{
+      "llvm.used",
+  };
+
   for (auto &GV : M.global_values()) {
     // errs() << "GV: ";
     // errs().write_escaped(GV.getName()) << '\n';
-    if (!exported_syms.contains(GV.getName().str())) {
+
+    if (libcallRoutines.contains(GV.getName().str())) {
+      errs() << "GV: " << GV.getName() << " is a libcall\n";
+      appendToUsed(M, ArrayRef{&GV});
+    }
+
+    if (!exported_syms.contains(GV.getName().str()) &&
+        !skiplist.contains(GV.getName().str())) {
       using LT = GlobalValue::LinkageTypes;
       // func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
       const auto old_linkage = GV.getLinkage();
