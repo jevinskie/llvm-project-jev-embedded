@@ -49,9 +49,9 @@ static std::vector<std::string> getLines(StringRef path) {
   return ret;
 }
 
-__attribute__((noinline)) static bool link_bc_archive(Module &M,
-                                                      StringRef ar_path) {
-  fmt::print(stderr, "linking in {:s}\n", ar_path.str());
+static std::unique_ptr<Module> load_bc_archive(StringRef ar_path,
+                                               LLVMContext &Context) {
+  fmt::print(stderr, "loading {:s}\n", ar_path.str());
   auto ar_bin = llvm::object::createBinary(ar_path);
   if (Error E = ar_bin.takeError())
     EoE(std::move(E));
@@ -60,9 +60,8 @@ __attribute__((noinline)) static bool link_bc_archive(Module &M,
   }
   const auto *ar = cast<const llvm::object::Archive>(ar_bin->getBinary());
 
-  // std::unique_ptr<Module> Result(new Module("ArchiveModule",
-  // M.getContext())); Linker L(*Result);
-  Linker L(M);
+  std::unique_ptr<Module> Result(new Module("ArchiveModule", Context));
+  Linker L(*Result);
 
   Error Err = Error::success();
   for (const auto &child : ar->children(Err)) {
@@ -77,12 +76,15 @@ __attribute__((noinline)) static bool link_bc_archive(Module &M,
       EoE(std::move(E));
 
     if (identify_magic(MemBuf->getBuffer()) != llvm::file_magic::bitcode) {
-      errs() << "child " << *name << " isn't a bitcode file\n";
+      if (!name->startswith("outline_atomic_")) {
+        errs() << "child " << *name << " isn't a bitcode file\n";
+      }
+      continue;
     }
 
     SMDiagnostic ParseErr;
     std::unique_ptr<Module> NewM{getLazyIRModule(
-        MemoryBuffer::getMemBuffer(*MemBuf, false), ParseErr, M.getContext())};
+        MemoryBuffer::getMemBuffer(*MemBuf, false), ParseErr, Context)};
     if (!NewM) {
       report_fatal_error("failed to parse " + *name);
     }
@@ -94,6 +96,14 @@ __attribute__((noinline)) static bool link_bc_archive(Module &M,
   if (Err)
     EoE(std::move(Err));
 
+  return Result;
+}
+
+static bool link_bc_archive(Module &M, StringRef ar_path) {
+  std::unique_ptr<Module> NewM = load_bc_archive(ar_path, M.getContext());
+  if (!NewM) {
+    report_fatal_error("failed to load " + ar_path);
+  }
   return true;
 }
 
