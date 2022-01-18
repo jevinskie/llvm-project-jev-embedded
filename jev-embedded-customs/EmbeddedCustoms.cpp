@@ -12,9 +12,13 @@
 using namespace llvm;
 
 static cl::opt<std::string>
-    exported_syms_file("exported-syms",
+    exported_syms_file("embcust-exported-syms",
                        cl::desc("file with list of exported symbols"),
                        cl::Required);
+
+static cl::opt<std::string>
+    libgcc("embcust-libgcc",
+           cl::desc("libgcc/compiler-rt lto library to link"));
 
 namespace jev {
 
@@ -35,10 +39,11 @@ static std::vector<std::string> getLines(StringRef path) {
   return ret;
 }
 
-static bool runEmbeddedCustoms(Module &M) {
+static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
   errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
   errs() << "runEmbeddedCustoms: name: ";
   errs().write_escaped(M.getName()) << '\n';
+  errs() << "runEmbeddedCustoms: link_libgcc: " << ShouldLinkLibgcc << '\n';
 
   const auto exported_sym_names = getLines(exported_syms_file);
   const std::set<std::string> exported_syms{exported_sym_names.cbegin(),
@@ -46,8 +51,8 @@ static bool runEmbeddedCustoms(Module &M) {
   fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
 
   for (auto &GV : M.global_values()) {
-    errs() << "GV: ";
-    errs().write_escaped(GV.getName()) << '\n';
+    // errs() << "GV: ";
+    // errs().write_escaped(GV.getName()) << '\n';
     if (!exported_syms.contains(GV.getName().str())) {
       using LT = GlobalValue::LinkageTypes;
       // func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
@@ -76,8 +81,9 @@ static bool runEmbeddedCustoms(Module &M) {
       }
 
       if (new_linkage != old_linkage) {
-        errs() << "changing " << GV.getName() << " linkage from " << old_linkage
-               << " to " << new_linkage << '\n';
+        // errs() << "changing " << GV.getName() << " linkage from " <<
+        // old_linkage
+        // << " to " << new_linkage << '\n';
       }
       GV.setLinkage(new_linkage);
     }
@@ -85,9 +91,18 @@ static bool runEmbeddedCustoms(Module &M) {
   return true;
 }
 
-struct EmbeddedCustoms : PassInfoMixin<EmbeddedCustoms> {
+class EmbeddedCustomsPass : public PassInfoMixin<EmbeddedCustomsPass> {
+  bool ShouldLinkLibgcc;
+
+public:
+  EmbeddedCustomsPass() { }
+  EmbeddedCustomsPass(bool link_libgcc)
+      : ShouldLinkLibgcc(link_libgcc) {
+        assert(!ShouldLinkLibgcc || !libgcc.empty());
+      }
+
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    if (!runEmbeddedCustoms(M))
+    if (!runEmbeddedCustoms(M, ShouldLinkLibgcc))
       return PreservedAnalyses::all();
     return PreservedAnalyses::none();
   }
@@ -97,20 +112,23 @@ struct EmbeddedCustoms : PassInfoMixin<EmbeddedCustoms> {
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustoms", LLVM_VERSION_STRING,
+  return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, llvm::ModulePassManager &PM,
                    ArrayRef<llvm::PassBuilder::PipelineElement>) {
                   if (Name == "embcust") {
-                    PM.addPass(jev::EmbeddedCustoms());
+                    PM.addPass(jev::EmbeddedCustomsPass());
+                    return true;
+                  } else if (Name.startswith("embcust<") && Name.endswith(">")) {
+                    PM.addPass(jev::EmbeddedCustomsPass(true));
                     return true;
                   }
                   return false;
                 });
             // PB.registerPipelineStartEPCallback(
             //     [&](ModulePassManager &PM, OptimizationLevel Level) {
-            //       PM.addPass(EmbeddedCustoms());
+            //       PM.addPass(EmbeddedCustomsPass());
             //     });
           }};
 }
