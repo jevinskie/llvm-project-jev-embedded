@@ -116,7 +116,6 @@ MODULE_PASS("sancov-module", ModuleSanitizerCoveragePass())
 MODULE_PASS("memprof-module", ModuleMemProfilerPass())
 MODULE_PASS("poison-checking", PoisonCheckingPass())
 MODULE_PASS("pseudo-probe-update", PseudoProbeUpdatePass())
-MODULE_PASS("write-bitcode", BitcodeWriterPass())
 #undef MODULE_PASS
 
 #ifndef MODULE_PASS_WITH_PARAMS
@@ -145,6 +144,15 @@ MODULE_PASS_WITH_PARAMS("asan-module",
                         },
                         parseASanPassOptions,
                         "kernel")
+MODULE_PASS_WITH_PARAMS("write-bitcode",
+                        "BitcodeWriterPass",
+                        [](StringRef filename) {
+                          return BitcodeWriterPass(filename);
+                        },
+                        [](StringRef option) -> Expected<StringRef> {
+                          return option;
+                        },
+                        "file")
 #undef MODULE_PASS_WITH_PARAMS
 
 #ifndef CGSCC_ANALYSIS

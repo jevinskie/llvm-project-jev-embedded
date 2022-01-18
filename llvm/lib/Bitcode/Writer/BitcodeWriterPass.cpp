@@ -31,15 +31,6 @@ PreservedAnalyses BitcodeWriterPass::run(Module &M, ModuleAnalysisManager &AM) {
   return PreservedAnalyses::all();
 }
 
-static std::string dump_file_name() {
-  const auto now = std::chrono::system_clock::now().time_since_epoch().count();
-  return formatv("write-bitcode-{0}.bc", now).str();
-}
-
-BitcodeWriterPass::BitcodeWriterPass() : FDOS{std::make_unique<raw_fd_ostream>(dump_file_name(), FDEC)}, OS{*FDOS} {
-  assert(!EC);
-}
-
 namespace {
   class WriteBitcodePass : public ModulePass {
     raw_ostream &OS; // raw_ostream to print on

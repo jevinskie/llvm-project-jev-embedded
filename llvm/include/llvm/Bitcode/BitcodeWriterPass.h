@@ -70,8 +70,14 @@ public:
       : OS(OS), ShouldPreserveUseListOrder(ShouldPreserveUseListOrder),
   EmitSummaryIndex(EmitSummaryIndex), EmitModuleHash(EmitModuleHash) {}
 
-  /// Construct a bitcode writer pass to dump to a timestamped file
-  BitcodeWriterPass();
+  /// Construct a bitcode writer pass to dump to stderr
+  BitcodeWriterPass() : BitcodeWriterPass(dbgs()) { };
+
+
+  BitcodeWriterPass(StringRef filename) :
+    FDOS{std::make_unique<raw_fd_ostream>(filename, FDEC)}, OS{*FDOS} {
+    assert(!EC);
+  }
 
   /// Run the bitcode writer pass, and output the module to the selected
   /// output stream.
