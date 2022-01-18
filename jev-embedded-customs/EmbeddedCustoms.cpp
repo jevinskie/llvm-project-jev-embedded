@@ -1,4 +1,5 @@
 #include "llvm/BinaryFormat/Magic.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
@@ -25,6 +26,13 @@ static cl::opt<std::string>
 
 namespace jev {
 
+static std::set<std::string> libcallRoutineNames{
+#define HANDLE_LIBCALL(code, name) name,
+#include "llvm/IR/RuntimeLibcalls.def"
+#undef HANDLE_LIBCALL
+};
+
+
 static void EoE(Error &&E) {
   std::string str;
   llvm::raw_string_ostream ostr(str);
@@ -47,6 +55,15 @@ static std::vector<std::string> getLines(StringRef path) {
       ret.push_back(s.str());
   }
   return ret;
+}
+
+static void dump_module(Module &M, StringRef path) {
+  std::error_code EC;
+  raw_fd_ostream f{path, EC};
+  if (EC) {
+    report_fatal_error("dump_module: failed to create file " + path);
+  }
+  WriteBitcodeToFile(M, f);
 }
 
 static std::unique_ptr<Module> load_bc_archive(StringRef ar_path,
@@ -104,6 +121,15 @@ static bool link_bc_archive(Module &M, StringRef ar_path) {
   if (!NewM) {
     report_fatal_error("failed to load " + ar_path);
   }
+  errs() << "dumping librt whole mod\n";
+  dump_module(*NewM, "librt.bc");
+  dump_module(M, "mod.bc");
+  errs() << "begining librt ar whole link\n";
+  Linker L(M);
+  if (L.linkInModule(std::move(NewM), Linker::Flags::LinkOnlyNeeded)) {
+    report_fatal_error("failed to link in " + ar_path);
+  }
+  dump_module(M, "mod-linked.bc");
   return true;
 }
 
@@ -119,7 +145,7 @@ static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
   fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
   if (ShouldLinkLibgcc) {
     fmt::print(stderr, "linking in libgcc\n", fmt::join(exported_syms, ", "));
-    link_bc_archive(M, libgcc);
+    // link_bc_archive(M, libgcc);
   }
 
   for (auto &GV : M.global_values()) {
@@ -167,7 +193,7 @@ class EmbeddedCustomsPass : public PassInfoMixin<EmbeddedCustomsPass> {
   bool ShouldLinkLibgcc;
 
 public:
-  EmbeddedCustomsPass() {}
+  EmbeddedCustomsPass() : ShouldLinkLibgcc{false} {}
   EmbeddedCustomsPass(bool link_libgcc) : ShouldLinkLibgcc(link_libgcc) {
     if (ShouldLinkLibgcc && libgcc.empty()) {
       report_fatal_error("Specify a libgcc path with -embcust-libgcc <PATH>");
