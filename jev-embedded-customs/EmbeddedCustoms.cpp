@@ -1,6 +1,5 @@
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
-#include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -35,6 +34,14 @@ static cl::opt<std::string>
            cl::desc("libgcc/compiler-rt lto library to link"));
 
 namespace jev {
+
+struct PassOpts {
+  bool ShouldLinkLibgcc;
+  bool ShouldRenameCtorsArray;
+  std::string EntrypointWrapper;
+
+  PassOpts() = default;
+};
 
 static const char *libcallRoutineNames[] = {
 #define HANDLE_LIBCALL(code, name) name,
@@ -162,12 +169,62 @@ static bool link_bc_archive(Module &M, StringRef ar_path) {
   return true;
 }
 
-static void rename_structor_array(const char *Array, Module &M) {
+struct Structor {
+  int Priority = 0;
+  Constant *Func = nullptr;
+  GlobalValue *ComdatKey = nullptr;
+
+  Structor() = default;
+};
+
+static void preprocessXXStructorList(const DataLayout &DL, const Constant *List,
+                                     SmallVector<Structor, 8> &Structors) {
+  // Should be an array of '{ i32, void ()*, i8* }' structs.  The first value is
+  // the init priority.
+  if (!isa<ConstantArray>(List))
+    return;
+
+  // Gather the structors in a form that's convenient for sorting by priority.
+  for (Value *O : cast<ConstantArray>(List)->operands()) {
+    auto *CS = cast<ConstantStruct>(O);
+    if (CS->getOperand(1)->isNullValue())
+      break; // Found a null terminator, skip the rest.
+    ConstantInt *Priority = dyn_cast<ConstantInt>(CS->getOperand(0));
+    if (!Priority)
+      continue; // Malformed.
+    Structors.push_back(Structor());
+    Structor &S = Structors.back();
+    S.Priority = Priority->getLimitedValue(65535);
+    S.Func = CS->getOperand(1);
+    if (!CS->getOperand(2)->isNullValue()) {
+      S.ComdatKey =
+          dyn_cast<GlobalValue>(CS->getOperand(2)->stripPointerCasts());
+    }
+  }
+
+  // Emit the function pointers in the target-specific order
+  llvm::stable_sort(Structors, [](const Structor &L, const Structor &R) {
+    return L.Priority < R.Priority;
+  });
+}
+
+static bool rename_structor_array(const char *Array, const char *NewArray,
+                                  const char *Section, Module &M) {
   IRBuilder<> IRB(M.getContext());
 
   const auto DL = M.getDataLayout();
-  const auto GVCtor = M.getNamedGlobal(Array);
-  rel_assert(GVCtor);
+  const GlobalVariable *GVCtor = M.getNamedGlobal(Array);
+  fmt::print(stderr, "GVCtor: {:p}\n", fmt::ptr(GVCtor));
+  if (!GVCtor)
+    return false;
+
+  const Constant *OrigInit = GVCtor->getInitializer();
+  rel_assert(OrigInit);
+  SmallVector<Structor, 8> Structors;
+  preprocessXXStructorList(DL, OrigInit, Structors);
+  for (const auto &ctor : Structors) {
+    fmt::print(stderr, "ctor name: {:s}\n", ctor.Func->getName().str());
+  }
 
 #if 0
   FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
@@ -206,18 +263,27 @@ static void rename_structor_array(const char *Array, Module &M) {
   (void)new GlobalVariable(M, NewInit->getType(), false,
                            GlobalValue::AppendingLinkage, NewInit, Array);
 #endif
+
+  return true;
 }
 
 static void renameCtorsDtorsArrays(Module &M) {
   errs() << "renaming ctor/dtor array\n";
-  rename_structor_array("llvm.global_ctors", M);
-  rename_structor_array("llvm.global_dtors", M);
+  rename_structor_array("llvm.global_ctors", "llvm.global_ctors.embcust",
+                        ".init_array_embcust", M);
+  rename_structor_array("llvm.global_dtors", "llvm.global_dtors.embcust",
+                        ".fini_array_embcust", M);
 }
 
-static bool runEmbeddedCustoms(Module &M, bool link_libgcc,
-                               bool rename_ctors_array) {
+static void wrapEntrypoints(const std::string &EntrypointWrapperName,
+                            Module &M) {
+  errs() << "wrapping entry points with a call to " << EntrypointWrapperName
+         << "()\n";
+}
 
-  if (link_libgcc) {
+static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
+
+  if (opts.ShouldLinkLibgcc) {
     link_bc_archive(M, libgcc);
   }
 
@@ -283,36 +349,60 @@ static bool runEmbeddedCustoms(Module &M, bool link_libgcc,
     }
   }
 
-  if (rename_ctors_array) {
+  if (opts.ShouldRenameCtorsArray) {
     renameCtorsDtorsArrays(M);
+  }
+
+  if (!opts.EntrypointWrapper.empty()) {
+    wrapEntrypoints(opts.EntrypointWrapper, M);
   }
 
   return true;
 }
 
 class EmbeddedCustomsPass : public PassInfoMixin<EmbeddedCustomsPass> {
-  bool ShouldLinkLibgcc;
-  bool ShouldRenameCtorsArray;
+  const PassOpts opts;
 
 public:
-  EmbeddedCustomsPass()
-      : ShouldLinkLibgcc(false), ShouldRenameCtorsArray(false) {}
-  EmbeddedCustomsPass(bool link_libgcc, bool rename_ctors_array)
-      : ShouldLinkLibgcc(link_libgcc),
-        ShouldRenameCtorsArray(rename_ctors_array) {
-    if (ShouldLinkLibgcc && libgcc.empty()) {
+  EmbeddedCustomsPass() : opts() {}
+  EmbeddedCustomsPass(const PassOpts &opts) : opts(opts) {
+    if (opts.ShouldLinkLibgcc && libgcc.empty()) {
       report_fatal_error("Specify a libgcc path with -embcust-libgcc <PATH>");
     }
   }
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    if (!runEmbeddedCustoms(M, ShouldLinkLibgcc, ShouldRenameCtorsArray))
+    if (!runEmbeddedCustoms(M, opts))
       return PreservedAnalyses::all();
     return PreservedAnalyses::none();
   }
 };
 
 } // namespace jev
+
+static jev::PassOpts parsePassOpts(StringRef opts_str) {
+  jev::PassOpts opts;
+
+  StringRef opt_list{opts_str};
+  opt_list.consume_front("embcust<");
+  opt_list.consume_back(">");
+  SmallVector<StringRef> opts_strs;
+  opt_list.split(opts_strs, "&");
+
+  for (const auto &opt : opts_strs) {
+    if (opt == "link_libgcc")
+      opts.ShouldLinkLibgcc = true;
+    else if (opt == "rename_ctors_array")
+      opts.ShouldRenameCtorsArray = true;
+    else if (opt.startswith("ep_wrapper=")) {
+      StringRef ep_wrap_sym = opt;
+      ep_wrap_sym.consume_front("ep_wrapper=");
+      opts.EntrypointWrapper = ep_wrap_sym;
+    }
+  }
+
+  return opts;
+}
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
@@ -326,21 +416,8 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                     return true;
                   } else if (Name.startswith("embcust<") &&
                              Name.endswith(">")) {
-                    bool link_libgcc = false;
-                    bool rename_ctors_array = false;
-                    StringRef opt_list{Name};
-                    opt_list.consume_front("embcust<");
-                    opt_list.consume_back(">");
-                    SmallVector<StringRef> opts;
-                    opt_list.split(opts, ",");
-                    for (const auto &opt : opts) {
-                      if (opt == "link_libgcc")
-                        link_libgcc = true;
-                      else if (opt == "rename_ctors_array")
-                        rename_ctors_array = true;
-                    }
-                    PM.addPass(jev::EmbeddedCustomsPass(link_libgcc,
-                                                        rename_ctors_array));
+                    const auto opts = parsePassOpts(Name);
+                    PM.addPass(jev::EmbeddedCustomsPass(opts));
                     return true;
                   }
                   return false;
