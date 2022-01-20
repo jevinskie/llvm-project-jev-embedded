@@ -144,41 +144,49 @@ static bool link_bc_archive(Module &M, StringRef ar_path) {
   return true;
 }
 
-static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
-  // errs() << "EmbeddedCustoms: " << __PRETTY_FUNCTION__ << "\n";
-  // errs() << "runEmbeddedCustoms: name: ";
-  // errs().write_escaped(M.getName()) << '\n';
-  // errs() << "runEmbeddedCustoms: link_libgcc: " << ShouldLinkLibgcc << '\n';
+static bool runEmbeddedCustoms(Module &M, bool link_libgcc,
+                               bool rename_ctors_array) {
 
+  if (link_libgcc) {
+    link_bc_archive(M, libgcc);
+  }
+
+  // get exported syms from newline seperated file (# as first char on line is a
+  // comment)
   const auto exported_sym_names = getLines(exported_syms_file);
   const std::set<std::string> exported_syms{exported_sym_names.cbegin(),
                                             exported_sym_names.cend()};
-  // fmt::print(stderr, "exp_sym: {}\n", fmt::join(exported_syms, ", "));
-  // if (ShouldLinkLibgcc) {
-  //   fmt::print(stderr, "linking in libgcc\n", fmt::join(exported_syms, ", "));
-  //   link_bc_archive(M, libgcc);
-  // }
 
-  static std::set<std::string> skiplist{
-      "llvm.used",
+  // symbols to not change visibility of
+  static const std::set<std::string> vis_mod_skiplist{
+      // "llvm.used",
   };
 
   for (auto &GV : M.global_values()) {
-    // errs() << "GV: ";
-    // errs().write_escaped(GV.getName()) << '\n';
-
+    // if we find a (builtin? not sure) libcall, add it to used or else it may
+    // get optimized out but another pass later adds a call
     if (libcallRoutines.contains(GV.getName().str())) {
-      // errs() << "GV: " << GV.getName() << " is a libcall\n";
       appendToUsed(M, ArrayRef{&GV});
     }
 
-    if (!exported_syms.contains(GV.getName().str()) &&
-        !skiplist.contains(GV.getName().str())) {
+    if ( // don't change visibility on symbols we want exported
+         // note we don't force external visibility for these *optionally*
+         // exported symbols
+        !exported_syms.contains(GV.getName().str()) &&
+        // don't change visibility of symbols in skip list
+        !vis_mod_skiplist.contains(GV.getName().str()) &&
+        // don't mess with llvm reserved globals, e.g. making llvm.used private
+        // drops .init_array
+        !GV.getName().startswith("llvm.")) {
       using LT = GlobalValue::LinkageTypes;
+
+      // don't seem to need to change visibility, probably since i'm only
+      // statically linking
       // func.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
+
+      // downgrade linkage
       const auto old_linkage = GV.getLinkage();
       auto new_linkage = old_linkage;
-
       if (!GV.isDeclaration()) {
         switch (old_linkage) {
         case LT::LinkOnceAnyLinkage:
@@ -190,40 +198,45 @@ static bool runEmbeddedCustoms(Module &M, bool ShouldLinkLibgcc) {
         case LT::LinkOnceODRLinkage:
         case LT::WeakODRLinkage:
         case LT::AppendingLinkage:
+          // internal linkage is the "weakest" that still shows up in symbol
+          // table (debugging)
           new_linkage = LT::InternalLinkage;
           break;
         case LT::PrivateLinkage:
-          // do nothing
+          // do nothing, already "weakest" linkage
           break;
         default:
           llvm_unreachable("unhandled linkage type");
         }
       }
-
-      if (new_linkage != old_linkage) {
-        // errs() << "changing " << GV.getName() << " linkage from " <<
-        // old_linkage
-        // << " to " << new_linkage << '\n';
-      }
       GV.setLinkage(new_linkage);
     }
   }
+
+  if (rename_ctors_array) {
+    errs() << "renaming ctor/dtor array\n";
+  }
+
   return true;
 }
 
 class EmbeddedCustomsPass : public PassInfoMixin<EmbeddedCustomsPass> {
   bool ShouldLinkLibgcc;
+  bool ShouldRenameCtorsArray;
 
 public:
-  EmbeddedCustomsPass() : ShouldLinkLibgcc{false} {}
-  EmbeddedCustomsPass(bool link_libgcc) : ShouldLinkLibgcc(link_libgcc) {
+  EmbeddedCustomsPass()
+      : ShouldLinkLibgcc(false), ShouldRenameCtorsArray(false) {}
+  EmbeddedCustomsPass(bool link_libgcc, bool rename_ctors_array)
+      : ShouldLinkLibgcc(link_libgcc),
+        ShouldRenameCtorsArray(rename_ctors_array) {
     if (ShouldLinkLibgcc && libgcc.empty()) {
       report_fatal_error("Specify a libgcc path with -embcust-libgcc <PATH>");
     }
   }
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    if (!runEmbeddedCustoms(M, ShouldLinkLibgcc))
+    if (!runEmbeddedCustoms(M, ShouldLinkLibgcc, ShouldRenameCtorsArray))
       return PreservedAnalyses::all();
     return PreservedAnalyses::none();
   }
@@ -241,21 +254,31 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   if (Name == "embcust") {
                     PM.addPass(jev::EmbeddedCustomsPass());
                     return true;
-                  } else if (Name == "embcust<link_libgcc>") {
-                    PM.addPass(jev::EmbeddedCustomsPass(true));
+                  } else if (Name.startswith("embcust<") &&
+                             Name.endswith(">")) {
+                    bool link_libgcc = false;
+                    bool rename_ctors_array = false;
+                    StringRef opt_list{Name};
+                    opt_list.consume_front("embcust<");
+                    opt_list.consume_back(">");
+                    SmallVector<StringRef> opts;
+                    opt_list.split(opts, ",");
+                    for (const auto &opt : opts) {
+                      if (opt == "link_libgcc")
+                        link_libgcc = true;
+                      else if (opt == "rename_ctors_array")
+                        rename_ctors_array = true;
+                    }
+                    PM.addPass(jev::EmbeddedCustomsPass(link_libgcc,
+                                                        rename_ctors_array));
                     return true;
                   }
                   return false;
                 });
-            // PB.registerPipelineStartEPCallback(
-            //     [&](ModulePassManager &PM, OptimizationLevel Level) {
-            //       PM.addPass(EmbeddedCustomsPass());
-            //     });
           }};
 }
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  assert(!"fuckabees!");
   return getEmbeddedCustomsPluginInfo();
 }
