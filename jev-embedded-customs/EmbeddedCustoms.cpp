@@ -49,12 +49,21 @@ static const char *libcallRoutineNames[] = {
 #undef HANDLE_LIBCALL
 };
 
+static std::set<std::string> bannedLibcallRoutineNames{
+    "__gcc_personality_sj0",
+    "__gcc_personality_v0",
+    "__gcc_personality_imp",
+};
+
 static std::set<std::string> getLibcallRoutines() {
   std::set<std::string> res;
   for (const auto name : libcallRoutineNames) {
     if (name)
       res.insert(name);
   }
+  std::erase_if(res, [](const auto &name) {
+    return bannedLibcallRoutineNames.contains(name);
+  });
   return res;
 }
 
@@ -152,21 +161,33 @@ static std::unique_ptr<Module> load_bc_archive(StringRef ar_path,
   return Result;
 }
 
-static bool link_bc_archive(Module &M, StringRef ar_path) {
+static void link_bc_archive(Module &M, StringRef ar_path, bool only_needed) {
   std::unique_ptr<Module> NewM = load_bc_archive(ar_path, M.getContext());
   if (!NewM) {
     report_fatal_error("failed to load " + ar_path);
   }
   errs() << "dumping librt whole mod\n";
   dump_module(*NewM, "librt.bc");
-  dump_module(M, "mod.bc");
+  dump_module(M, "merd.bc");
   errs() << "begining librt ar whole link\n";
   Linker L(M);
-  if (L.linkInModule(std::move(NewM), Linker::Flags::LinkOnlyNeeded)) {
+  if (L.linkInModule(std::move(NewM),
+                     only_needed ? Linker::Flags::LinkOnlyNeeded : 0)) {
     report_fatal_error("failed to link in " + ar_path);
   }
-  dump_module(M, "mod-linked.bc");
-  return true;
+  dump_module(M, "merd-linked.bc");
+}
+
+static void link_libgcc(Module &M, StringRef libgcc_path) {
+  link_bc_archive(M, libgcc_path, false);
+  for (const auto &bannedName : bannedLibcallRoutineNames) {
+    auto GV = M.getNamedValue(bannedName);
+    errs() << "looking for gv " << bannedName << "\n";
+    if (GV) {
+      errs() << "got gv " << GV->getName() << "\n";
+      GV->eraseFromParent();
+    }
+  }
 }
 
 struct Structor {
@@ -284,7 +305,7 @@ static void wrapEntrypoints(const std::string &EntrypointWrapperName,
 static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
 
   if (opts.ShouldLinkLibgcc) {
-    link_bc_archive(M, libgcc);
+    link_libgcc(M, libgcc);
   }
 
   // get exported syms from newline seperated file (# as first char on line is a
@@ -301,13 +322,17 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
   for (auto &GV : M.global_values()) {
     // if we find a (builtin? not sure) libcall, add it to used or else it may
     // get optimized out but another pass later adds a call
-    if (libcallRoutines.contains(GV.getName().str())) {
+    bool isLibcall = libcallRoutines.contains(GV.getName().str());
+    if (isLibcall) {
       appendToUsed(M, ArrayRef{&GV});
     }
 
-    if ( // don't change visibility on symbols we want exported
-         // note we don't force external visibility for these *optionally*
-         // exported symbols
+    if (
+        // don't touch decls
+        !GV.isDeclaration() &&
+        // don't change visibility on symbols we want exported
+        // note we don't force external visibility for these *optionally*
+        // exported symbols
         !exported_syms.contains(GV.getName().str()) &&
         // don't change visibility of symbols in skip list
         !vis_mod_skiplist.contains(GV.getName().str()) &&
@@ -323,27 +348,24 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
       // downgrade linkage
       const auto old_linkage = GV.getLinkage();
       auto new_linkage = old_linkage;
-      if (!GV.isDeclaration()) {
-        switch (old_linkage) {
-        case LT::LinkOnceAnyLinkage:
-        case LT::CommonLinkage:
-        case LT::ExternalWeakLinkage:
-        case LT::WeakAnyLinkage:
-        case LT::ExternalLinkage:
-        case LT::AvailableExternallyLinkage:
-        case LT::LinkOnceODRLinkage:
-        case LT::WeakODRLinkage:
-        case LT::AppendingLinkage:
-          // internal linkage is the "weakest" that still shows up in symbol
-          // table (debugging)
-          new_linkage = LT::InternalLinkage;
-          break;
-        case LT::PrivateLinkage:
-          // do nothing, already "weakest" linkage
-          break;
-        default:
-          llvm_unreachable("unhandled linkage type");
-        }
+      switch (old_linkage) {
+      case LT::LinkOnceAnyLinkage:
+      case LT::CommonLinkage:
+      case LT::ExternalWeakLinkage:
+      case LT::WeakAnyLinkage:
+      case LT::ExternalLinkage:
+      case LT::AvailableExternallyLinkage:
+      case LT::LinkOnceODRLinkage:
+      case LT::WeakODRLinkage:
+      case LT::AppendingLinkage:
+        // internal linkage is the "weakest" that still shows up in symbol
+        // table (debugging)
+        new_linkage = LT::InternalLinkage;
+        break;
+      case LT::InternalLinkage:
+      case LT::PrivateLinkage:
+        // do nothing, already "weakest" linkage
+        break;
       }
       GV.setLinkage(new_linkage);
     }
