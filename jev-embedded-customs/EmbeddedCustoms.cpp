@@ -1,6 +1,9 @@
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Object/Archive.h"
@@ -12,7 +15,13 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
+#include <filesystem>
+
 #include <fmt/format.h>
+
+#define rel_assert(__e)                                                        \
+  ((__e) ? (void)0                                                             \
+         : release_assert_fail(__FILE__, __LINE__, __PRETTY_FUNCTION__, #__e))
 
 using namespace llvm;
 
@@ -49,6 +58,15 @@ static void EoE(Error &&E) {
   llvm::raw_string_ostream ostr(str);
   ostr << E;
   report_fatal_error(StringRef{str});
+}
+
+static void release_assert_fail(const char *file, int line, const char *func,
+                                const char *expr) {
+  std::filesystem::path f{file};
+
+  report_fatal_error(StringRef{fmt::format(
+      "{:s}:{:d}\n\n{:s}:{:d} {:s} condition failed ->\n\trel_assert({:s})\n",
+      file, line, f.filename().string(), line, func, expr)});
 }
 
 static std::vector<std::string> getLines(StringRef path) {
@@ -144,6 +162,58 @@ static bool link_bc_archive(Module &M, StringRef ar_path) {
   return true;
 }
 
+static void rename_structor_array(const char *Array, Module &M) {
+  IRBuilder<> IRB(M.getContext());
+
+  const auto DL = M.getDataLayout();
+  const auto GVCtor = M.getNamedGlobal(Array);
+  rel_assert(GVCtor);
+
+#if 0
+  FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
+
+  // Get the current set of static global structors
+  std::vector<Constant *> CurrentCtors;
+  StructType *EltTy = StructType::get(
+      IRB.getInt32Ty(), PointerType::getUnqual(FnTy), IRB.getInt8PtrTy());
+  if (GlobalVariable *GVCtor = M.getNamedGlobal(Array)) {
+    if (Constant *Init = GVCtor->getInitializer()) {
+      unsigned n = Init->getNumOperands();
+      CurrentCtors.reserve(n);
+      for (unsigned i = 0; i != n; ++i)
+        CurrentCtors.push_back(cast<Constant>(Init->getOperand(i)));
+    }
+    GVCtor->eraseFromParent();
+  }
+
+  // Build a 3 field global_ctor entry.  We don't take a comdat key.
+  Constant *CSVals[3];
+  CSVals[0] = IRB.getInt32(Priority);
+  CSVals[1] = F;
+  CSVals[2] = Data ? ConstantExpr::getPointerCast(Data, IRB.getInt8PtrTy())
+                   : Constant::getNullValue(IRB.getInt8PtrTy());
+  Constant *RuntimeCtorInit =
+      ConstantStruct::get(EltTy, makeArrayRef(CSVals, EltTy->getNumElements()));
+
+  CurrentCtors.push_back(RuntimeCtorInit);
+
+  // Create a new initializer.
+  ArrayType *AT = ArrayType::get(EltTy, CurrentCtors.size());
+  Constant *NewInit = ConstantArray::get(AT, CurrentCtors);
+
+  // Create the new global variable and replace all uses of
+  // the old global variable with the new one.
+  (void)new GlobalVariable(M, NewInit->getType(), false,
+                           GlobalValue::AppendingLinkage, NewInit, Array);
+#endif
+}
+
+static void renameCtorsDtorsArrays(Module &M) {
+  errs() << "renaming ctor/dtor array\n";
+  rename_structor_array("llvm.global_ctors", M);
+  rename_structor_array("llvm.global_dtors", M);
+}
+
 static bool runEmbeddedCustoms(Module &M, bool link_libgcc,
                                bool rename_ctors_array) {
 
@@ -214,7 +284,7 @@ static bool runEmbeddedCustoms(Module &M, bool link_libgcc,
   }
 
   if (rename_ctors_array) {
-    errs() << "renaming ctor/dtor array\n";
+    renameCtorsDtorsArrays(M);
   }
 
   return true;
