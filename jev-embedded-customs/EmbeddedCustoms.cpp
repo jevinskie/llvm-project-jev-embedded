@@ -337,7 +337,7 @@ static void wrapEntrypoints(const std::string &EntrypointWrapperName,
          << "()\n";
 }
 
-static void usedHackApply(Module &M) {
+static void GlobalOptHackApply(Module &M) {
   GlobalVariable *GV = M.getGlobalVariable("llvm.used");
   if (!GV)
     return;
@@ -346,25 +346,18 @@ static void usedHackApply(Module &M) {
   const auto NGV = new llvm::GlobalVariable(
       M, CA->getType(), true, GlobalValue::ExternalLinkage,
       GV->getInitializer(), "__embcust_llvm_used");
-  const auto NGV2 = new llvm::GlobalVariable(
-      M, CA->getType(), true, GlobalValue::ExternalLinkage,
-      GV->getInitializer(), "__embcust_llvm_used2");
-  // appendToUsed(M, ArrayRef{cast<GlobalValue>(GV)});
+
+  for (const auto &Op : CA->operands()) {
+    Op->print(errs());
+    errs() << '\n';
+    Constant *C = cast_or_null<Constant>(Op);
+  }
 }
 
-static void usedHackRemove(Module &M) {
+static void GlobalOptHackRemove(Module &M) {
   GlobalVariable *GV = M.getGlobalVariable("__embcust_llvm_used");
-  fmt::print(stderr, "GV: {:p} name: {:s}\n", fmt::ptr(GV),
-             GV ? GV->getName() : "(null)");
-  if (!GV)
-    return;
+  rel_assert(GV);
   GV->eraseFromParent();
-  GlobalVariable *GV2 = M.getGlobalVariable("__embcust_llvm_used2");
-  fmt::print(stderr, "GV2: {:p} name: {:s}\n", fmt::ptr(GV),
-             GV2 ? GV2->getName() : "(null)");
-  if (!GV2)
-    return;
-  GV2->eraseFromParent();
 }
 
 static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
@@ -436,9 +429,9 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
   }
 
   if (opts.Pre) {
-    usedHackApply(M);
+    GlobalOptHackApply(M);
   } else {
-    usedHackRemove(M);
+    GlobalOptHackRemove(M);
   }
 
   if (opts.ShouldRenameCtorsArray) {
@@ -478,7 +471,6 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
   opt_list.split(opts_strs, "&");
 
   for (const auto &opt : opts_strs) {
-    errs() << "opt str: " << opt << "\n";
     if (opt == "pre")
       opts.Pre = true;
     else if (opt == "post")
@@ -505,22 +497,18 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
-  errs() << "getEmbeddedCustomsPluginInfo\n";
   return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            errs() << "PASSBUILDER\n";
             // EmbeddedCustomsPass
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, llvm::ModulePassManager &PM,
                    ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  errs() << "parsing " << Name << "\n";
                   if (Name == "embcust") {
                     report_fatal_error("EmbeddedCustomsPass needs pre/post "
                                        "option e.g. embcust<{pre,post}>");
                     return false;
                   } else if (Name.startswith("embcust<") &&
                              Name.endswith(">")) {
-                    errs() << "found angle brackets\n";
                     const auto opts = parsePassOpts(Name);
                     PM.addPass(jev::EmbeddedCustomsPass(opts));
                     return true;
@@ -534,10 +522,11 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   if (!any_isa<const Module *>(IR))
                     return;
                   const auto &M = *any_cast<const Module *>(IR);
-                  // const auto GV = M.getNamedValue("__getf2");
-                  const auto GV = M.getNamedValue("__embcust_llvm_used");
-                  fmt::print(stderr, "after pass: {:s} GV: {:p}\n", P,
-                             fmt::ptr(GV));
+                  const auto __getf2 = M.getNamedValue("__getf2");
+                  const auto __gttf2 = M.getNamedValue("__gttf2");
+                  fmt::print(stderr,
+                             "after pass: {:s} __getf2: {:p} __gttf2: {:p}\n",
+                             P, fmt::ptr(__getf2), fmt::ptr(__gttf2));
                 });
           }};
 }
