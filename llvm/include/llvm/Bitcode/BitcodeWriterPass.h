@@ -76,7 +76,12 @@ public:
 
   BitcodeWriterPass(StringRef filename) :
     FDOS{std::make_unique<raw_fd_ostream>(filename, FDEC)}, OS{*FDOS} {
-    assert(!EC);
+    if (FDEC) {
+      std::string str;
+      llvm::raw_string_ostream ostr(str);
+      ostr << errorCodeToError(FDEC);
+      report_fatal_error(StringRef{str});
+    }
   }
 
   /// Run the bitcode writer pass, and output the module to the selected

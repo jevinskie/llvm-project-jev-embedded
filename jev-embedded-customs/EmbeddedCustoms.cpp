@@ -21,7 +21,8 @@
 
 #define rel_assert(__e)                                                        \
   ((__e) ? (void)0                                                             \
-         : release_assert_fail(__FILE__, __LINE__, __PRETTY_FUNCTION__, #__e))
+         : jev::release_assert_fail(__FILE__, __LINE__, __PRETTY_FUNCTION__,   \
+                                    #__e))
 
 using namespace llvm;
 
@@ -342,9 +343,12 @@ static void usedHackApply(Module &M) {
     return;
   rel_assert(GV->hasInitializer());
   const auto *CA = cast<ConstantArray>(GV->getInitializer());
-  GV = new llvm::GlobalVariable(M, CA->getType(), true,
-                                GlobalValue::ExternalLinkage,
-                                GV->getInitializer(), "__embcust_llvm_used");
+  const auto NGV = new llvm::GlobalVariable(
+      M, CA->getType(), true, GlobalValue::ExternalLinkage,
+      GV->getInitializer(), "__embcust_llvm_used");
+  const auto NGV2 = new llvm::GlobalVariable(
+      M, CA->getType(), true, GlobalValue::ExternalLinkage,
+      GV->getInitializer(), "__embcust_llvm_used2");
   // appendToUsed(M, ArrayRef{cast<GlobalValue>(GV)});
 }
 
@@ -355,6 +359,12 @@ static void usedHackRemove(Module &M) {
   if (!GV)
     return;
   GV->eraseFromParent();
+  GlobalVariable *GV2 = M.getGlobalVariable("__embcust_llvm_used2");
+  fmt::print(stderr, "GV2: {:p} name: {:s}\n", fmt::ptr(GV),
+             GV2 ? GV2->getName() : "(null)");
+  if (!GV2)
+    return;
+  GV2->eraseFromParent();
 }
 
 static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
@@ -468,6 +478,7 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
   opt_list.split(opts_strs, "&");
 
   for (const auto &opt : opts_strs) {
+    errs() << "opt str: " << opt << "\n";
     if (opt == "pre")
       opts.Pre = true;
     else if (opt == "post")
@@ -494,18 +505,22 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
+  errs() << "getEmbeddedCustomsPluginInfo\n";
   return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
+            errs() << "PASSBUILDER\n";
             // EmbeddedCustomsPass
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, llvm::ModulePassManager &PM,
                    ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  errs() << "parsing " << Name << "\n";
                   if (Name == "embcust") {
                     report_fatal_error("EmbeddedCustomsPass needs pre/post "
                                        "option e.g. embcust<{pre,post}>");
                     return false;
                   } else if (Name.startswith("embcust<") &&
                              Name.endswith(">")) {
+                    errs() << "found angle brackets\n";
                     const auto opts = parsePassOpts(Name);
                     PM.addPass(jev::EmbeddedCustomsPass(opts));
                     return true;
@@ -519,7 +534,8 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   if (!any_isa<const Module *>(IR))
                     return;
                   const auto &M = *any_cast<const Module *>(IR);
-                  const auto GV = M.getNamedValue("__getf2");
+                  // const auto GV = M.getNamedValue("__getf2");
+                  const auto GV = M.getNamedValue("__embcust_llvm_used");
                   fmt::print(stderr, "after pass: {:s} GV: {:p}\n", P,
                              fmt::ptr(GV));
                 });
