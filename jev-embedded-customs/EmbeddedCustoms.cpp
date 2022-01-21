@@ -25,6 +25,7 @@
                                     #__e))
 
 using namespace llvm;
+using LT = GlobalValue::LinkageTypes;
 
 static cl::opt<std::string>
     exported_syms_file("embcust-exported-syms",
@@ -349,18 +350,31 @@ static void GlobalOptHackApply(Module &M) {
   if (!GV)
     return;
   rel_assert(GV->hasInitializer());
-  const auto *CA = cast<ConstantArray>(GV->getInitializer());
-  const auto NGV = new llvm::GlobalVariable(
-      M, CA->getType(), true, GlobalValue::ExternalLinkage,
-      GV->getInitializer(), "__embcust_llvm_used");
+  auto *CA = cast<ConstantArray>(GV->getInitializer());
+  auto NGV =
+      new llvm::GlobalVariable(M, CA->getType(), true, LT::ExternalLinkage,
+                               GV->getInitializer(), "__embcust_llvm_used");
 
-  for (const auto &Op : CA->operands()) {
-    Op->print(errs());
+  for (auto &Op : CA->operands()) {
+    // Op->print(errs());
+    // errs() << '\n';
+    auto GV = cast<GlobalValue>(Op->stripPointerCasts());
+    // GV->print(errs());
+    // errs() << '\n';
+    Constant *C = cast<Constant>(Op);
+    // static GlobalAlias *create(Type *Ty, unsigned AddressSpace,
+    // LinkageTypes Linkage, const Twine &Name,
+    // Constant *Aliasee, Module *Parent);
+
+    auto NGA = GlobalAlias::create(
+        LT::ExternalLinkage, "__embcust_alias_hack_1_" + GV->getName(), GV);
+    errs() << "new GlobalAlias: __embcust_alias_hack_" << GV->getName()
+           << ":\n";
+    NGA->print(errs());
     errs() << '\n';
-    const auto GV = cast<GlobalValue>(Op->stripPointerCasts());
-    GV->print(errs());
-    errs() << '\n';
-    Constant *C = cast_or_null<Constant>(Op);
+
+    auto NGA2 = GlobalAlias::create(
+        LT::ExternalLinkage, "__embcust_alias_hack_2_" + GV->getName(), GV);
   }
 }
 
@@ -368,6 +382,15 @@ static void GlobalOptHackRemove(Module &M) {
   GlobalVariable *GV = M.getGlobalVariable("__embcust_llvm_used");
   rel_assert(GV);
   GV->eraseFromParent();
+  std::vector<GlobalAlias *> DeleteList;
+  for (auto &GA : M.aliases()) {
+    if (GA.hasName() && GA.getName().startswith("__embcust_alias_hack_"))
+      DeleteList.push_back(&GA);
+  }
+  for (auto *GA : DeleteList) {
+    errs() << "erasing hack alias " << GA->getName() << "\n";
+    GA->eraseFromParent();
+  }
 }
 
 static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
@@ -406,7 +429,6 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
         // don't mess with llvm reserved globals, e.g. making llvm.used private
         // drops .init_array
         !GV.getName().startswith("llvm.")) {
-      using LT = GlobalValue::LinkageTypes;
 
       // don't seem to need to change visibility, probably since i'm only
       // statically linking
