@@ -187,10 +187,12 @@ static void RegisterPassPlugins(ArrayRef<std::string> PassPlugins,
       argv.push_back(opt.c_str());
       argv_str += " " + opt;
     }
-    if (cl::ParseCommandLineOptions(argv.size(), argv.data(), "", &os))
-      return;
+    const bool parse_res = cl::ParseCommandLineOptions(argv.size(), argv.data(),
+                                                       "LTOBackend pass plugin option parsing", &os);
     os.flush();
-    report_fatal_error("Parsing '" + argv_str + "': " + StringRef(err).trim(), false);
+    if (!parse_res) {
+      report_fatal_error("Parsing '" + argv_str + "': " + StringRef(err).trim());
+    }
 
     PassPlugin->registerPassBuilderCallbacks(PB);
   }
