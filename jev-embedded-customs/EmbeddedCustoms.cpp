@@ -3,6 +3,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PassInstrumentation.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Object/Archive.h"
@@ -30,13 +31,22 @@ static cl::opt<std::string>
                        cl::Required);
 
 static cl::opt<std::string>
-    libgcc("embcust-libgcc",
-           cl::desc("libgcc/compiler-rt lto library to link"));
+    libgcc("embcust-libgcc", cl::desc("libgcc/compiler-rt lto library to link"),
+           cl::Required);
+
+template <> struct fmt::formatter<StringRef> : formatter<string_view> {
+  // parse is inherited from formatter<string_view>.
+  template <typename FormatContext>
+  auto format(StringRef StrRef, FormatContext &ctx) {
+    return formatter<string_view>::format(StrRef.str(), ctx);
+  }
+};
 
 namespace jev {
 
 struct PassOpts {
-  bool ShouldLinkLibgcc;
+  bool Pre;
+  bool Post;
   bool ShouldRenameCtorsArray;
   std::string EntrypointWrapper;
 
@@ -50,9 +60,12 @@ static const char *libcallRoutineNames[] = {
 };
 
 static std::set<std::string> bannedLibcallRoutineNames{
-    "__gcc_personality_sj0",
-    "__gcc_personality_v0",
-    "__gcc_personality_imp",
+    "__gcc_personality_sj0", "__gcc_personality_v0", "__gcc_personality_imp",
+    "readEncodedPointer", // for gcc perso
+};
+
+static std::set<std::string> usedNames{
+    // "abort", // called by compiler-rt that's linked in later
 };
 
 static std::set<std::string> getLibcallRoutines() {
@@ -178,8 +191,29 @@ static void link_bc_archive(Module &M, StringRef ar_path, bool only_needed) {
   dump_module(M, "merd-linked.bc");
 }
 
+static void add_undefs_for_syms(Module &M,
+                                const std::set<std::string> &sym_names) {
+  IRBuilder<> IRB(M.getContext());
+  FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
+  for (const auto &sym_name : sym_names) {
+    M.getOrInsertFunction(sym_name, FnTy);
+  }
+}
+
+static void remove_undefs_syms(Module &M,
+                               const std::set<std::string> &sym_names) {
+  for (const auto &sym_name : sym_names) {
+    auto GV = M.getNamedValue(sym_name);
+    if (GV && GV->isDeclaration()) {
+      GV->eraseFromParent();
+    }
+  }
+}
+
 static void link_libgcc(Module &M, StringRef libgcc_path) {
-  link_bc_archive(M, libgcc_path, false);
+  add_undefs_for_syms(M, libcallRoutines);
+  link_bc_archive(M, libgcc_path, true);
+  // remove_undefs_syms(M, libcallRoutines);
   for (const auto &bannedName : bannedLibcallRoutineNames) {
     auto GV = M.getNamedValue(bannedName);
     errs() << "looking for gv " << bannedName << "\n";
@@ -302,9 +336,30 @@ static void wrapEntrypoints(const std::string &EntrypointWrapperName,
          << "()\n";
 }
 
-static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
+static void usedHackApply(Module &M) {
+  GlobalVariable *GV = M.getGlobalVariable("llvm.used");
+  if (!GV)
+    return;
+  rel_assert(GV->hasInitializer());
+  const auto *CA = cast<ConstantArray>(GV->getInitializer());
+  GV = new llvm::GlobalVariable(M, CA->getType(), true,
+                                GlobalValue::ExternalLinkage,
+                                GV->getInitializer(), "__embcust_llvm_used");
+  // appendToUsed(M, ArrayRef{cast<GlobalValue>(GV)});
+}
 
-  if (opts.ShouldLinkLibgcc) {
+static void usedHackRemove(Module &M) {
+  GlobalVariable *GV = M.getGlobalVariable("__embcust_llvm_used");
+  fmt::print(stderr, "GV: {:p} name: {:s}\n", fmt::ptr(GV),
+             GV ? GV->getName() : "(null)");
+  if (!GV)
+    return;
+  GV->eraseFromParent();
+}
+
+static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
+  errs() << "running embcust " << (opts.Pre ? "pre" : "post") << "\n";
+  if (opts.Pre) {
     link_libgcc(M, libgcc);
   }
 
@@ -315,15 +370,14 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
                                             exported_sym_names.cend()};
 
   // symbols to not change visibility of
-  static const std::set<std::string> vis_mod_skiplist{
-      // "llvm.used",
-  };
+  static const std::set<std::string> vis_mod_skiplist{// "llvm.used",
+                                                      "__embcust_llvm_used"};
 
   for (auto &GV : M.global_values()) {
     // if we find a (builtin? not sure) libcall, add it to used or else it may
     // get optimized out but another pass later adds a call
     bool isLibcall = libcallRoutines.contains(GV.getName().str());
-    if (isLibcall) {
+    if (isLibcall || usedNames.contains(GV.getName().str())) {
       appendToUsed(M, ArrayRef{&GV});
     }
 
@@ -371,6 +425,12 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
     }
   }
 
+  if (opts.Pre) {
+    usedHackApply(M);
+  } else {
+    usedHackRemove(M);
+  }
+
   if (opts.ShouldRenameCtorsArray) {
     renameCtorsDtorsArrays(M);
   }
@@ -387,11 +447,7 @@ class EmbeddedCustomsPass : public PassInfoMixin<EmbeddedCustomsPass> {
 
 public:
   EmbeddedCustomsPass() : opts() {}
-  EmbeddedCustomsPass(const PassOpts &opts) : opts(opts) {
-    if (opts.ShouldLinkLibgcc && libgcc.empty()) {
-      report_fatal_error("Specify a libgcc path with -embcust-libgcc <PATH>");
-    }
-  }
+  EmbeddedCustomsPass(const PassOpts &opts) : opts(opts) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     if (!runEmbeddedCustoms(M, opts))
@@ -403,7 +459,7 @@ public:
 } // namespace jev
 
 static jev::PassOpts parsePassOpts(StringRef opts_str) {
-  jev::PassOpts opts;
+  jev::PassOpts opts{};
 
   StringRef opt_list{opts_str};
   opt_list.consume_front("embcust<");
@@ -412,8 +468,10 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
   opt_list.split(opts_strs, "&");
 
   for (const auto &opt : opts_strs) {
-    if (opt == "link_libgcc")
-      opts.ShouldLinkLibgcc = true;
+    if (opt == "pre")
+      opts.Pre = true;
+    else if (opt == "post")
+      opts.Post = true;
     else if (opt == "rename_ctors_array")
       opts.ShouldRenameCtorsArray = true;
     else if (opt.startswith("ep_wrapper=")) {
@@ -423,6 +481,14 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
     }
   }
 
+  if ((opts.Pre && opts.Post) || !(opts.Pre || opts.Post)) {
+    report_fatal_error("Must specify pre or post but not both");
+  }
+
+  if (opts.Pre && libgcc.empty()) {
+    report_fatal_error("Specify a libgcc path with -embcust-libgcc <PATH>");
+  }
+
   return opts;
 }
 
@@ -430,12 +496,14 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
+            // EmbeddedCustomsPass
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, llvm::ModulePassManager &PM,
                    ArrayRef<llvm::PassBuilder::PipelineElement>) {
                   if (Name == "embcust") {
-                    PM.addPass(jev::EmbeddedCustomsPass());
-                    return true;
+                    report_fatal_error("EmbeddedCustomsPass needs pre/post "
+                                       "option e.g. embcust<{pre,post}>");
+                    return false;
                   } else if (Name.startswith("embcust<") &&
                              Name.endswith(">")) {
                     const auto opts = parsePassOpts(Name);
@@ -443,6 +511,17 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                     return true;
                   }
                   return false;
+                });
+
+            // debug callbacks
+            PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(
+                [](StringRef P, Any IR, const PreservedAnalyses &) {
+                  if (!any_isa<const Module *>(IR))
+                    return;
+                  const auto &M = *any_cast<const Module *>(IR);
+                  const auto GV = M.getNamedValue("__getf2");
+                  fmt::print(stderr, "after pass: {:s} GV: {:p}\n", P,
+                             fmt::ptr(GV));
                 });
           }};
 }
