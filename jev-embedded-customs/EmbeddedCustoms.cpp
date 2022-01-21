@@ -192,29 +192,36 @@ static void link_bc_archive(Module &M, StringRef ar_path, bool only_needed) {
   dump_module(M, "merd-linked.bc");
 }
 
-static void add_undefs_for_syms(Module &M,
-                                const std::set<std::string> &sym_names) {
+static std::set<std::string>
+add_undefs_for_syms(Module &M, const std::set<std::string> &sym_names) {
+  std::set<std::string> AddedDecls;
   IRBuilder<> IRB(M.getContext());
   FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
   for (const auto &sym_name : sym_names) {
-    M.getOrInsertFunction(sym_name, FnTy);
+    if (!M.getFunction(sym_name)) {
+      AddedDecls.insert(sym_name);
+      M.getOrInsertFunction(sym_name, FnTy);
+    }
   }
+  return AddedDecls;
 }
 
 static void remove_undefs_syms(Module &M,
                                const std::set<std::string> &sym_names) {
   for (const auto &sym_name : sym_names) {
     auto GV = M.getNamedValue(sym_name);
-    if (GV && GV->isDeclaration()) {
+    rel_assert(GV);
+    fmt::print(stderr, "GV: {:s} decl: {:b}\n", GV->getName(),
+               GV->isDeclaration());
+    if (GV->isDeclaration())
       GV->eraseFromParent();
-    }
   }
 }
 
 static void link_libgcc(Module &M, StringRef libgcc_path) {
-  add_undefs_for_syms(M, libcallRoutines);
+  const auto added_undefs = add_undefs_for_syms(M, libcallRoutines);
   link_bc_archive(M, libgcc_path, true);
-  // remove_undefs_syms(M, libcallRoutines);
+  remove_undefs_syms(M, added_undefs);
   for (const auto &bannedName : bannedLibcallRoutineNames) {
     auto GV = M.getNamedValue(bannedName);
     errs() << "looking for gv " << bannedName << "\n";
@@ -349,6 +356,9 @@ static void GlobalOptHackApply(Module &M) {
 
   for (const auto &Op : CA->operands()) {
     Op->print(errs());
+    errs() << '\n';
+    const auto GV = cast<GlobalValue>(Op->stripPointerCasts());
+    GV->print(errs());
     errs() << '\n';
     Constant *C = cast_or_null<Constant>(Op);
   }
