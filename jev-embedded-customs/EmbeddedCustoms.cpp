@@ -212,8 +212,6 @@ static void remove_undefs_syms(Module &M,
   for (const auto &sym_name : sym_names) {
     auto GV = M.getNamedValue(sym_name);
     rel_assert(GV);
-    fmt::print(stderr, "GV: {:s} decl: {:b}\n", GV->getName(),
-               GV->isDeclaration());
     if (GV->isDeclaration())
       GV->eraseFromParent();
   }
@@ -351,30 +349,15 @@ static void GlobalOptHackApply(Module &M) {
     return;
   rel_assert(GV->hasInitializer());
   auto *CA = cast<ConstantArray>(GV->getInitializer());
-  auto NGV =
-      new llvm::GlobalVariable(M, CA->getType(), true, LT::ExternalLinkage,
-                               GV->getInitializer(), "__embcust_llvm_used");
+  new llvm::GlobalVariable(M, CA->getType(), true, LT::ExternalLinkage,
+                           GV->getInitializer(), "__embcust_llvm_used");
 
   for (auto &Op : CA->operands()) {
-    // Op->print(errs());
-    // errs() << '\n';
     auto GV = cast<GlobalValue>(Op->stripPointerCasts());
-    // GV->print(errs());
-    // errs() << '\n';
-    Constant *C = cast<Constant>(Op);
-    // static GlobalAlias *create(Type *Ty, unsigned AddressSpace,
-    // LinkageTypes Linkage, const Twine &Name,
-    // Constant *Aliasee, Module *Parent);
-
-    auto NGA = GlobalAlias::create(
-        LT::ExternalLinkage, "__embcust_alias_hack_1_" + GV->getName(), GV);
-    errs() << "new GlobalAlias: __embcust_alias_hack_" << GV->getName()
-           << ":\n";
-    NGA->print(errs());
-    errs() << '\n';
-
-    auto NGA2 = GlobalAlias::create(
-        LT::ExternalLinkage, "__embcust_alias_hack_2_" + GV->getName(), GV);
+    GlobalAlias::create(LT::ExternalLinkage,
+                        "__embcust_alias_hack_1_" + GV->getName(), GV);
+    GlobalAlias::create(LT::ExternalLinkage,
+                        "__embcust_alias_hack_2_" + GV->getName(), GV);
   }
 }
 
@@ -388,26 +371,27 @@ static void GlobalOptHackRemove(Module &M) {
       DeleteList.push_back(&GA);
   }
   for (auto *GA : DeleteList) {
-    errs() << "erasing hack alias " << GA->getName() << "\n";
     GA->eraseFromParent();
   }
 }
 
 static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
   errs() << "running embcust " << (opts.Pre ? "pre" : "post") << "\n";
-  if (opts.Pre) {
-    link_libgcc(M, libgcc);
-  }
 
   // get exported syms from newline seperated file (# as first char on line is a
   // comment)
   const auto exported_sym_names = getLines(exported_syms_file);
   const std::set<std::string> exported_syms{exported_sym_names.cbegin(),
                                             exported_sym_names.cend()};
+  usedNames.insert(exported_syms.cbegin(), exported_syms.cend());
 
   // symbols to not change visibility of
   static const std::set<std::string> vis_mod_skiplist{// "llvm.used",
                                                       "__embcust_llvm_used"};
+
+  if (opts.Pre) {
+    link_libgcc(M, libgcc);
+  }
 
   for (auto &GV : M.global_values()) {
     // if we find a (builtin? not sure) libcall, add it to used or else it may
@@ -529,38 +513,37 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
-          [](PassBuilder &PB) {
-            // EmbeddedCustomsPass
-            PB.registerPipelineParsingCallback(
-                [](StringRef Name, llvm::ModulePassManager &PM,
-                   ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "embcust") {
-                    report_fatal_error("EmbeddedCustomsPass needs pre/post "
-                                       "option e.g. embcust<{pre,post}>");
-                    return false;
-                  } else if (Name.startswith("embcust<") &&
-                             Name.endswith(">")) {
-                    const auto opts = parsePassOpts(Name);
-                    PM.addPass(jev::EmbeddedCustomsPass(opts));
-                    return true;
-                  }
-                  return false;
-                });
+  return {
+      LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
+      [](PassBuilder &PB) {
+        // EmbeddedCustomsPass
+        PB.registerPipelineParsingCallback(
+            [](StringRef Name, llvm::ModulePassManager &PM,
+               ArrayRef<llvm::PassBuilder::PipelineElement>) {
+              if (Name == "embcust") {
+                report_fatal_error("EmbeddedCustomsPass needs pre/post "
+                                   "option e.g. embcust<{pre,post}>");
+                return false;
+              } else if (Name.startswith("embcust<") && Name.endswith(">")) {
+                const auto opts = parsePassOpts(Name);
+                PM.addPass(jev::EmbeddedCustomsPass(opts));
+                return true;
+              }
+              return false;
+            });
 
-            // debug callbacks
-            PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(
-                [](StringRef P, Any IR, const PreservedAnalyses &) {
-                  if (!any_isa<const Module *>(IR))
-                    return;
-                  const auto &M = *any_cast<const Module *>(IR);
-                  const auto __getf2 = M.getNamedValue("__getf2");
-                  const auto __gttf2 = M.getNamedValue("__gttf2");
-                  fmt::print(stderr,
-                             "after pass: {:s} __getf2: {:p} __gttf2: {:p}\n",
-                             P, fmt::ptr(__getf2), fmt::ptr(__gttf2));
-                });
-          }};
+        // debug callbacks
+        PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(
+            [](StringRef P, Any IR, const PreservedAnalyses &) {
+              if (!any_isa<const Module *>(IR))
+                return;
+              const auto &M = *any_cast<const Module *>(IR);
+              const auto GV = M.getNamedValue("libc_start_embcust_stage2");
+              fmt::print(stderr,
+                         "after pass: {:s} libc_start_embcust_stage2: {:p}\n",
+                         P, fmt::ptr(GV));
+            });
+      }};
 }
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
