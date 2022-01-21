@@ -161,18 +161,6 @@ Error Config::addSaveTemps(std::string OutputFileName,
   llvm::PassPluginLibraryInfo get##Ext##PluginInfo();
 #include "llvm/Support/Extension.def"
 
-// FIXME: this is a copy-pasta hack
-static void parseClangOption(StringRef opt) {
-  std::string err;
-  raw_string_ostream os(err);
-
-  const char *argv[] = {"libLTO", opt.data()};
-  if (cl::ParseCommandLineOptions(2, argv, "", &os))
-    return;
-  os.flush();
-  report_fatal_error("Parsing '" + opt + "': " + StringRef(err).trim(), false);
-}
-
 static void RegisterPassPlugins(ArrayRef<std::string> PassPlugins,
                                 ArrayRef<std::string> PassPluginOpts,
                                 PassBuilder &PB) {
@@ -189,9 +177,20 @@ static void RegisterPassPlugins(ArrayRef<std::string> PassPlugins,
       continue;
     }
 
+    // handle plugin options
+    std::string err;
+    raw_string_ostream os(err);
+
+    std::vector<const char *> argv{"libLTO"};
+    std::string argv_str = "libLTO";
     for (const auto &opt : PassPluginOpts) {
-      parseClangOption(opt);
+      argv.push_back(opt.c_str());
+      argv_str += " " + opt;
     }
+    if (cl::ParseCommandLineOptions(argv.size(), argv.data(), "", &os))
+      return;
+    os.flush();
+    report_fatal_error("Parsing '" + argv_str + "': " + StringRef(err).trim(), false);
 
     PassPlugin->registerPassBuilderCallbacks(PB);
   }
