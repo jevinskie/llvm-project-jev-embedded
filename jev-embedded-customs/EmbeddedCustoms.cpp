@@ -67,6 +67,7 @@ static std::set<std::string> bannedLibcallRoutineNames{
 };
 
 static std::set<std::string> usedNames{
+    // "__init_array_start", "__init_array_end",
     // "abort", // called by compiler-rt that's linked in later
 };
 
@@ -538,9 +539,9 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
               if (!any_isa<const Module *>(IR))
                 return;
               const auto &M = *any_cast<const Module *>(IR);
-              const auto GV = M.getNamedValue("libc_start_embcust_stage2");
+              const auto GV = M.getNamedValue("__init_array_start");
               fmt::print(stderr,
-                         "after pass: {:s} libc_start_embcust_stage2: {:p}\n",
+                         "after pass: {:s} __init_array_start: {:p}\n",
                          P, fmt::ptr(GV));
             });
       }};
