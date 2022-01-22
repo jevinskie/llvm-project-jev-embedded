@@ -44,12 +44,22 @@ template <> struct fmt::formatter<StringRef> : formatter<string_view> {
   }
 };
 
+inline raw_ostream &operator<<(raw_ostream &OS, const Type *T) {
+  if (T)
+    T->print(OS);
+  else
+    OS << "(null)";
+  return OS;
+}
 inline raw_ostream &operator<<(raw_ostream &OS, const Value &V) {
   V.print(OS);
   return OS;
 }
 inline raw_ostream &operator<<(raw_ostream &OS, const Value *V) {
-  V->print(OS);
+  if (V)
+    V->print(OS);
+  else
+    OS << "(null)";
   return OS;
 }
 
@@ -286,6 +296,7 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
     return false;
 
   const Constant *OrigInit = GVCtor->getInitializer();
+  const ConstantArray *OrigInitArray = cast<ConstantArray>(OrigInit);
   rel_assert(OrigInit);
   SmallVector<Structor, 8> Structors;
   preprocessXXStructorList(DL, OrigInit, Structors);
@@ -298,6 +309,9 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
   }
 
   FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
+  Type *ElTy = OrigInitArray->getType()->getElementType();
+  errs() << "ElTy: " << ElTy << "\n";
+  // FunctionType *FnTy = OrigInitArray->getType()->getElementType();
   PointerType *FnPtrTy = PointerType::getUnqual(FnTy);
   ArrayType *AT = ArrayType::get(FnTy, Structors.size());
   Constant *NewInit = ConstantArray::get(AT, CurrentCtors);
@@ -308,30 +322,43 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
 
   const auto NewArrayStart = std::string{NewArray} + "_start";
   auto OGVS = M.getGlobalVariable(NewArrayStart);
-  auto NGVS =
-      new GlobalVariable(M, FnPtrTy, true, GlobalVariable::InternalLinkage,
-                         nullptr, NewArrayStart);
+  auto NBits = M.getDataLayout().getPointerTypeSizeInBits(FnTy);
+  // auto NGVSInitVal = IRB.getInt8(0);
+  auto NGVSInitVal = IRB.getInt8(0);
+  auto NGVSInit =
+      cast<Constant>(IRB.CreateIntToPtr(NGVSInitVal, FnPtrTy, "fnptr_s"));
+  errs() << "NGVSInit: " << NGVSInit << "\n";
+  auto NGVS = new GlobalVariable(M, FnPtrTy, true, LT::InternalLinkage,
+                                 NGVSInit, NewArrayStart);
   NGVS->setSection(Section);
   appendToUsed(M, NGVS);
   errs() << "OGVS: " << OGVS << "\n";
   errs() << "NGVS: " << NGVS << "\n";
-  // if (OGVS) {
-  //   OGVS->setLinkage(LT::InternalLinkage);
-  //   OGVS->replaceAllUsesWith(NGVS);
-  //   NGVS->takeName(OGVS);
-  //   OGVS->eraseFromParent();
-  // }
+  if (OGVS) {
+    OGVS->replaceAllUsesWith(NGVS);
+    NGVS->takeName(OGVS);
+    OGVS->eraseFromParent();
+  }
+  errs() << "NGVS: " << NGVS << "\n";
+  auto NGVS2 = M.getGlobalVariable(NewArrayStart);
+  errs() << "NGVS2: " << NGVS2 << "\n";
 
   const auto NewArrayEnd = std::string{NewArray} + "_end";
   auto OGVE = M.getGlobalVariable(NewArrayEnd);
-  auto NGVE = new GlobalVariable(M, FnTy, true, LT::InternalLinkage, nullptr,
-                                 NewArrayEnd);
+  auto NGVEInit =
+      cast<Constant>(IRB.CreateIntToPtr(IRB.getInt8(0), FnPtrTy, "fnptr_e"));
+  errs() << "NGVEInit: " << NGVEInit << "\n";
+  auto NGVE = new GlobalVariable(M, FnPtrTy, true, LT::InternalLinkage,
+                                 NGVEInit, NewArrayEnd);
   NGVE->setSection(Section);
-  // if (OGVE) {
-  //   OGVE->replaceAllUsesWith(NGVE);
-  //   NGVE->takeName(OGVE);
-  //   OGVE->eraseFromParent();
-  // }
+  appendToUsed(M, NGVE);
+  errs() << "OGVE: " << OGVE << "\n";
+  errs() << "NGVE: " << NGVE << "\n";
+  if (OGVE) {
+    OGVE->replaceAllUsesWith(NGVE);
+    NGVE->takeName(OGVE);
+    OGVE->eraseFromParent();
+  }
 
   return true;
 }
