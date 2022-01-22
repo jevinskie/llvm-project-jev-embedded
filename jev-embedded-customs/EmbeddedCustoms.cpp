@@ -201,14 +201,14 @@ static void link_bc_archive(Module &M, StringRef ar_path, bool only_needed) {
   if (!NewM)
     report_fatal_error("failed to load " + ar_path);
   errs() << "dumping librt whole mod\n";
-  dump_module(*NewM, "librt.bc");
-  dump_module(M, "merd.bc");
+  // dump_module(*NewM, "librt.bc");
+  // dump_module(M, "merd.bc");
   errs() << "begining librt ar whole link\n";
   Linker L(M);
   if (L.linkInModule(std::move(NewM),
                      only_needed ? Linker::Flags::LinkOnlyNeeded : 0))
     report_fatal_error("failed to link in " + ar_path);
-  dump_module(M, "merd-linked.bc");
+  // dump_module(M, "merd-linked.bc");
 }
 
 static std::set<std::string>
@@ -313,7 +313,7 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
   errs() << "ElTy: " << ElTy << "\n";
   // FunctionType *FnTy = OrigInitArray->getType()->getElementType();
   PointerType *FnPtrTy = PointerType::getUnqual(FnTy);
-  ArrayType *AT = ArrayType::get(FnTy, Structors.size());
+  ArrayType *AT = ArrayType::get(FnPtrTy, Structors.size());
   Constant *NewInit = ConstantArray::get(AT, CurrentCtors);
 
   auto NGV = new GlobalVariable(M, NewInit->getType(), true,
@@ -322,12 +322,18 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
 
   const auto NewArrayStart = std::string{NewArray} + "_start";
   auto OGVS = M.getGlobalVariable(NewArrayStart);
-  auto NBits = M.getDataLayout().getPointerTypeSizeInBits(FnTy);
   // auto NGVSInitVal = IRB.getInt8(0);
-  auto NGVSInitVal = IRB.getInt8(0);
-  auto NGVSInit =
-      cast<Constant>(IRB.CreateIntToPtr(NGVSInitVal, FnPtrTy, "fnptr_s"));
-  errs() << "NGVSInit: " << NGVSInit << "\n";
+  // auto NGVSInit2 =
+  // cast<Constant>(IRB.CreateIntToPtr(NGVSInitVal, FnPtrTy, "fnptr_s"));
+  // auto NGVSInitValTy = cast<ArrayType>(NewInit->getType())->getElementType();
+  auto NGVSInitValTy = AT->getElementType()->getPointerTo();
+  errs() << "NGVSInitValTy: " << NGVSInitValTy << "\n";
+  errs() << "NGV: " << NGV << "\n";
+  auto Zero = IRB.getIntN(DL.getPointerSize() * 8, 0);
+  auto NGVSInitVal =
+      IRB.CreateInBoundsGEP(AT, NGV, ArrayRef<Value *>{Zero}, "fart");
+  errs() << "NGVSInitVal: " << NGVSInitVal << "\n";
+  auto NGVSInit = cast<Constant>(NGVSInitVal);
   auto NGVS = new GlobalVariable(M, FnPtrTy, true, LT::InternalLinkage,
                                  NGVSInit, NewArrayStart);
   NGVS->setSection(Section);
