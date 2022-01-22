@@ -44,6 +44,15 @@ template <> struct fmt::formatter<StringRef> : formatter<string_view> {
   }
 };
 
+inline raw_ostream &operator<<(raw_ostream &OS, const Value &V) {
+  V.print(OS);
+  return OS;
+}
+inline raw_ostream &operator<<(raw_ostream &OS, const Value *V) {
+  V->print(OS);
+  return OS;
+}
+
 namespace jev {
 
 struct PassOpts {
@@ -179,18 +188,16 @@ static std::unique_ptr<Module> load_bc_archive(StringRef ar_path,
 
 static void link_bc_archive(Module &M, StringRef ar_path, bool only_needed) {
   std::unique_ptr<Module> NewM = load_bc_archive(ar_path, M.getContext());
-  if (!NewM) {
+  if (!NewM)
     report_fatal_error("failed to load " + ar_path);
-  }
   errs() << "dumping librt whole mod\n";
   dump_module(*NewM, "librt.bc");
   dump_module(M, "merd.bc");
   errs() << "begining librt ar whole link\n";
   Linker L(M);
   if (L.linkInModule(std::move(NewM),
-                     only_needed ? Linker::Flags::LinkOnlyNeeded : 0)) {
+                     only_needed ? Linker::Flags::LinkOnlyNeeded : 0))
     report_fatal_error("failed to link in " + ar_path);
-  }
   dump_module(M, "merd-linked.bc");
 }
 
@@ -224,11 +231,8 @@ static void link_libgcc(Module &M, StringRef libgcc_path) {
   remove_undefs_syms(M, added_undefs);
   for (const auto &bannedName : bannedLibcallRoutineNames) {
     auto GV = M.getNamedValue(bannedName);
-    errs() << "looking for gv " << bannedName << "\n";
-    if (GV) {
-      errs() << "got gv " << GV->getName() << "\n";
+    if (GV)
       GV->eraseFromParent();
-    }
   }
 }
 
@@ -277,7 +281,7 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
 
   const auto DL = M.getDataLayout();
   const GlobalVariable *GVCtor = M.getNamedGlobal(Array);
-  fmt::print(stderr, "GVCtor: {:p}\n", fmt::ptr(GVCtor));
+  fmt::print(stderr, "GVCtor for {:s}: {:p}\n", Array, fmt::ptr(GVCtor));
   if (!GVCtor)
     return false;
 
@@ -285,56 +289,58 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
   rel_assert(OrigInit);
   SmallVector<Structor, 8> Structors;
   preprocessXXStructorList(DL, OrigInit, Structors);
+
+  std::vector<Constant *> CurrentCtors;
+
   for (const auto &ctor : Structors) {
     fmt::print(stderr, "ctor name: {:s}\n", ctor.Func->getName().str());
+    CurrentCtors.push_back(ctor.Func);
   }
 
-#if 0
   FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
-
-  // Get the current set of static global structors
-  std::vector<Constant *> CurrentCtors;
-  StructType *EltTy = StructType::get(
-      IRB.getInt32Ty(), PointerType::getUnqual(FnTy), IRB.getInt8PtrTy());
-  if (GlobalVariable *GVCtor = M.getNamedGlobal(Array)) {
-    if (Constant *Init = GVCtor->getInitializer()) {
-      unsigned n = Init->getNumOperands();
-      CurrentCtors.reserve(n);
-      for (unsigned i = 0; i != n; ++i)
-        CurrentCtors.push_back(cast<Constant>(Init->getOperand(i)));
-    }
-    GVCtor->eraseFromParent();
-  }
-
-  // Build a 3 field global_ctor entry.  We don't take a comdat key.
-  Constant *CSVals[3];
-  CSVals[0] = IRB.getInt32(Priority);
-  CSVals[1] = F;
-  CSVals[2] = Data ? ConstantExpr::getPointerCast(Data, IRB.getInt8PtrTy())
-                   : Constant::getNullValue(IRB.getInt8PtrTy());
-  Constant *RuntimeCtorInit =
-      ConstantStruct::get(EltTy, makeArrayRef(CSVals, EltTy->getNumElements()));
-
-  CurrentCtors.push_back(RuntimeCtorInit);
-
-  // Create a new initializer.
-  ArrayType *AT = ArrayType::get(EltTy, CurrentCtors.size());
+  PointerType *FnPtrTy = PointerType::getUnqual(FnTy);
+  ArrayType *AT = ArrayType::get(FnTy, Structors.size());
   Constant *NewInit = ConstantArray::get(AT, CurrentCtors);
 
-  // Create the new global variable and replace all uses of
-  // the old global variable with the new one.
-  (void)new GlobalVariable(M, NewInit->getType(), false,
-                           GlobalValue::AppendingLinkage, NewInit, Array);
-#endif
+  auto NGV = new GlobalVariable(M, NewInit->getType(), true,
+                                LT::InternalLinkage, NewInit, NewArray);
+  NGV->setSection(Section);
+
+  const auto NewArrayStart = std::string{NewArray} + "_start";
+  auto OGVS = M.getGlobalVariable(NewArrayStart);
+  auto NGVS =
+      new GlobalVariable(M, FnPtrTy, true, GlobalVariable::InternalLinkage,
+                         nullptr, NewArrayStart);
+  NGVS->setSection(Section);
+  appendToUsed(M, NGVS);
+  errs() << "OGVS: " << OGVS << "\n";
+  errs() << "NGVS: " << NGVS << "\n";
+  // if (OGVS) {
+  //   OGVS->setLinkage(LT::InternalLinkage);
+  //   OGVS->replaceAllUsesWith(NGVS);
+  //   NGVS->takeName(OGVS);
+  //   OGVS->eraseFromParent();
+  // }
+
+  const auto NewArrayEnd = std::string{NewArray} + "_end";
+  auto OGVE = M.getGlobalVariable(NewArrayEnd);
+  auto NGVE = new GlobalVariable(M, FnTy, true, LT::InternalLinkage, nullptr,
+                                 NewArrayEnd);
+  NGVE->setSection(Section);
+  // if (OGVE) {
+  //   OGVE->replaceAllUsesWith(NGVE);
+  //   NGVE->takeName(OGVE);
+  //   OGVE->eraseFromParent();
+  // }
 
   return true;
 }
 
 static void renameCtorsDtorsArrays(Module &M) {
   errs() << "renaming ctor/dtor array\n";
-  rename_structor_array("llvm.global_ctors", "llvm.global_ctors.embcust",
+  rename_structor_array("llvm.global_ctors", "__init_array_embcust",
                         ".init_array_embcust", M);
-  rename_structor_array("llvm.global_dtors", "llvm.global_dtors.embcust",
+  rename_structor_array("llvm.global_dtors", "__fini_array_embcust",
                         ".fini_array_embcust", M);
 }
 
@@ -451,7 +457,7 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
     GlobalOptHackRemove(M);
   }
 
-  if (opts.ShouldRenameCtorsArray) {
+  if (opts.Pre) {
     renameCtorsDtorsArrays(M);
   }
 
@@ -514,37 +520,37 @@ static jev::PassOpts parsePassOpts(StringRef opts_str) {
 
 /* New PM Registration */
 llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
-  return {
-      LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
-      [](PassBuilder &PB) {
-        // EmbeddedCustomsPass
-        PB.registerPipelineParsingCallback(
-            [](StringRef Name, llvm::ModulePassManager &PM,
-               ArrayRef<llvm::PassBuilder::PipelineElement>) {
-              if (Name == "embcust") {
-                report_fatal_error("EmbeddedCustomsPass needs pre/post "
-                                   "option e.g. embcust<{pre,post}>");
-                return false;
-              } else if (Name.startswith("embcust<") && Name.endswith(">")) {
-                const auto opts = parsePassOpts(Name);
-                PM.addPass(jev::EmbeddedCustomsPass(opts));
-                return true;
-              }
-              return false;
-            });
+  return {LLVM_PLUGIN_API_VERSION, "EmbeddedCustomsPass", LLVM_VERSION_STRING,
+          [](PassBuilder &PB) {
+            // EmbeddedCustomsPass
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, llvm::ModulePassManager &PM,
+                   ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "embcust") {
+                    report_fatal_error("EmbeddedCustomsPass needs pre/post "
+                                       "option e.g. embcust<{pre,post}>");
+                    return false;
+                  } else if (Name.startswith("embcust<") &&
+                             Name.endswith(">")) {
+                    const auto opts = parsePassOpts(Name);
+                    PM.addPass(jev::EmbeddedCustomsPass(opts));
+                    return true;
+                  }
+                  return false;
+                });
 
-        // debug callbacks
-        PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(
-            [](StringRef P, Any IR, const PreservedAnalyses &) {
-              if (!any_isa<const Module *>(IR))
-                return;
-              const auto &M = *any_cast<const Module *>(IR);
-              const auto GV = M.getNamedValue("__init_array_start");
-              fmt::print(stderr,
-                         "after pass: {:s} __init_array_start: {:p}\n",
-                         P, fmt::ptr(GV));
-            });
-      }};
+            // debug callbacks
+            PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(
+                [](StringRef P, Any IR, const PreservedAnalyses &) {
+                  if (!any_isa<const Module *>(IR))
+                    return;
+                  const auto &M = *any_cast<const Module *>(IR);
+                  // const auto GV = M.getNamedValue("__init_array_start");
+                  // fmt::print(stderr,
+                  //            "after pass: {:s} __init_array_start: {:p}\n",
+                  //            P, fmt::ptr(GV));
+                });
+          }};
 }
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
