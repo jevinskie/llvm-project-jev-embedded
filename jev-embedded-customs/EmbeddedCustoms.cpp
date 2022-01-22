@@ -330,12 +330,12 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
   errs() << "NGVSInitValTy: " << NGVSInitValTy << "\n";
   errs() << "NGV: " << NGV << "\n";
   auto Zero = IRB.getIntN(DL.getPointerSize() * 8, 0);
-  auto NGVSInitVal =
-      IRB.CreateInBoundsGEP(AT, NGV, ArrayRef<Value *>{Zero}, "fart");
+  auto NGVSInitVal = IRB.CreateInBoundsGEP(
+      AT, NGV, ArrayRef<Value *>{Zero, Zero}, "arraystart");
   errs() << "NGVSInitVal: " << NGVSInitVal << "\n";
   auto NGVSInit = cast<Constant>(NGVSInitVal);
-  auto NGVS = new GlobalVariable(M, FnPtrTy, true, LT::InternalLinkage,
-                                 NGVSInit, NewArrayStart);
+  auto NGVS = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
+                                 LT::InternalLinkage, NGVSInit, NewArrayStart);
   NGVS->setSection(Section);
   appendToUsed(M, NGVS);
   errs() << "OGVS: " << OGVS << "\n";
@@ -351,11 +351,14 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
 
   const auto NewArrayEnd = std::string{NewArray} + "_end";
   auto OGVE = M.getGlobalVariable(NewArrayEnd);
-  auto NGVEInit =
-      cast<Constant>(IRB.CreateIntToPtr(IRB.getInt8(0), FnPtrTy, "fnptr_e"));
+  auto One = IRB.getIntN(DL.getPointerSize() * 8, 1);
+  auto NGVEInitVal =
+      IRB.CreateInBoundsGEP(AT, NGV, ArrayRef<Value *>{One, Zero}, "arrayend");
+  errs() << "NGVSInitVal: " << NGVSInitVal << "\n";
+  auto NGVEInit = cast<Constant>(NGVEInitVal);
   errs() << "NGVEInit: " << NGVEInit << "\n";
-  auto NGVE = new GlobalVariable(M, FnPtrTy, true, LT::InternalLinkage,
-                                 NGVEInit, NewArrayEnd);
+  auto NGVE = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
+                                 LT::InternalLinkage, NGVEInit, NewArrayEnd);
   NGVE->setSection(Section);
   appendToUsed(M, NGVE);
   errs() << "OGVE: " << OGVE << "\n";
