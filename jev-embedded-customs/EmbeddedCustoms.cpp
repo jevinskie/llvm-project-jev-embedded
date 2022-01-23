@@ -137,7 +137,7 @@ static std::vector<std::string> getLines(StringRef path) {
   return ret;
 }
 
-static void dump_module(Module &M, StringRef path) {
+static void dump_module(const Module &M, StringRef path) {
   std::error_code EC;
   raw_fd_ostream f{path, EC};
   if (EC) {
@@ -200,10 +200,8 @@ static void link_bc_archive(Module &M, StringRef ar_path, bool only_needed) {
   std::unique_ptr<Module> NewM = load_bc_archive(ar_path, M.getContext());
   if (!NewM)
     report_fatal_error("failed to load " + ar_path);
-  errs() << "dumping librt whole mod\n";
   // dump_module(*NewM, "librt.bc");
   // dump_module(M, "merd.bc");
-  errs() << "begining librt ar whole link\n";
   Linker L(M);
   if (L.linkInModule(std::move(NewM),
                      only_needed ? Linker::Flags::LinkOnlyNeeded : 0))
@@ -291,78 +289,67 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
 
   const auto DL = M.getDataLayout();
   const GlobalVariable *GVCtor = M.getNamedGlobal(Array);
-  fmt::print(stderr, "GVCtor for {:s}: {:p}\n", Array, fmt::ptr(GVCtor));
-  if (!GVCtor)
-    return false;
 
-  const Constant *OrigInit = GVCtor->getInitializer();
-  const ConstantArray *OrigInitArray = cast<ConstantArray>(OrigInit);
-  rel_assert(OrigInit);
-  SmallVector<Structor, 8> Structors;
-  preprocessXXStructorList(DL, OrigInit, Structors);
+  const auto Zero = IRB.getIntN(DL.getPointerSize() * 8, 0);
+  const auto One = IRB.getIntN(DL.getPointerSize() * 8, 1);
+  FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
+  PointerType *FnPtrTy = PointerType::getUnqual(FnTy);
+  const auto NullFnPtr = cast<Constant>(
+      IRB.CreateIntToPtr(Zero, FnPtrTy->getPointerTo(), "nullfptr"));
+  const auto NewArrayStart = std::string{NewArray} + "_start";
+  const auto NewArrayEnd = std::string{NewArray} + "_end";
 
-  std::vector<Constant *> CurrentCtors;
+  auto OGVS = M.getGlobalVariable(NewArrayStart);
+  auto OGVE = M.getGlobalVariable(NewArrayEnd);
+  GlobalVariable *NGVS, *NGVE = nullptr;
 
-  for (const auto &ctor : Structors) {
-    fmt::print(stderr, "ctor name: {:s}\n", ctor.Func->getName().str());
-    CurrentCtors.push_back(ctor.Func);
+  if (GVCtor) {
+    std::vector<Constant *> CurrentCtors;
+    const Constant *OrigInit = GVCtor->getInitializer();
+    rel_assert(OrigInit);
+    SmallVector<Structor, 8> Structors;
+    preprocessXXStructorList(DL, OrigInit, Structors);
+    for (const auto &ctor : Structors) {
+      CurrentCtors.push_back(ctor.Func);
+    }
+
+    ArrayType *AT = ArrayType::get(FnPtrTy, Structors.size());
+    Constant *NewInit = ConstantArray::get(AT, CurrentCtors);
+
+    auto NGV = new GlobalVariable(M, NewInit->getType(), true,
+                                  LT::InternalLinkage, NewInit, NewArray);
+    NGV->setSection(Section);
+
+    auto NGVSInitVal = IRB.CreateInBoundsGEP(
+        AT, NGV, ArrayRef<Value *>{Zero, Zero}, "arraystart");
+    auto NGVSInit = cast<Constant>(NGVSInitVal);
+    NGVS = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
+                              LT::InternalLinkage, NGVSInit, NewArrayStart);
+
+    auto NGVEInitVal = IRB.CreateInBoundsGEP(
+        AT, NGV, ArrayRef<Value *>{One, Zero}, "arrayend");
+    auto NGVEInit = cast<Constant>(NGVEInitVal);
+    NGVE = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
+                              LT::InternalLinkage, NGVEInit, NewArrayEnd);
+
+  } else {
+    NGVS = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
+                              LT::InternalLinkage, NullFnPtr, NewArrayStart);
+    NGVS->setSection(Section);
+    NGVE = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
+                              LT::InternalLinkage, NullFnPtr, NewArrayEnd);
   }
 
-  FunctionType *FnTy = FunctionType::get(IRB.getVoidTy(), false);
-  Type *ElTy = OrigInitArray->getType()->getElementType();
-  errs() << "ElTy: " << ElTy << "\n";
-  // FunctionType *FnTy = OrigInitArray->getType()->getElementType();
-  PointerType *FnPtrTy = PointerType::getUnqual(FnTy);
-  ArrayType *AT = ArrayType::get(FnPtrTy, Structors.size());
-  Constant *NewInit = ConstantArray::get(AT, CurrentCtors);
-
-  auto NGV = new GlobalVariable(M, NewInit->getType(), true,
-                                LT::InternalLinkage, NewInit, NewArray);
-  NGV->setSection(Section);
-
-  const auto NewArrayStart = std::string{NewArray} + "_start";
-  auto OGVS = M.getGlobalVariable(NewArrayStart);
-  // auto NGVSInitVal = IRB.getInt8(0);
-  // auto NGVSInit2 =
-  // cast<Constant>(IRB.CreateIntToPtr(NGVSInitVal, FnPtrTy, "fnptr_s"));
-  // auto NGVSInitValTy = cast<ArrayType>(NewInit->getType())->getElementType();
-  auto NGVSInitValTy = AT->getElementType()->getPointerTo();
-  errs() << "NGVSInitValTy: " << NGVSInitValTy << "\n";
-  errs() << "NGV: " << NGV << "\n";
-  auto Zero = IRB.getIntN(DL.getPointerSize() * 8, 0);
-  auto NGVSInitVal = IRB.CreateInBoundsGEP(
-      AT, NGV, ArrayRef<Value *>{Zero, Zero}, "arraystart");
-  errs() << "NGVSInitVal: " << NGVSInitVal << "\n";
-  auto NGVSInit = cast<Constant>(NGVSInitVal);
-  auto NGVS = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
-                                 LT::InternalLinkage, NGVSInit, NewArrayStart);
   NGVS->setSection(Section);
   appendToUsed(M, NGVS);
-  errs() << "OGVS: " << OGVS << "\n";
-  errs() << "NGVS: " << NGVS << "\n";
   if (OGVS) {
     OGVS->replaceAllUsesWith(NGVS);
     NGVS->takeName(OGVS);
     OGVS->eraseFromParent();
   }
-  errs() << "NGVS: " << NGVS << "\n";
-  auto NGVS2 = M.getGlobalVariable(NewArrayStart);
-  errs() << "NGVS2: " << NGVS2 << "\n";
 
-  const auto NewArrayEnd = std::string{NewArray} + "_end";
-  auto OGVE = M.getGlobalVariable(NewArrayEnd);
-  auto One = IRB.getIntN(DL.getPointerSize() * 8, 1);
-  auto NGVEInitVal =
-      IRB.CreateInBoundsGEP(AT, NGV, ArrayRef<Value *>{One, Zero}, "arrayend");
-  errs() << "NGVSInitVal: " << NGVSInitVal << "\n";
-  auto NGVEInit = cast<Constant>(NGVEInitVal);
-  errs() << "NGVEInit: " << NGVEInit << "\n";
-  auto NGVE = new GlobalVariable(M, FnPtrTy->getPointerTo(), true,
-                                 LT::InternalLinkage, NGVEInit, NewArrayEnd);
   NGVE->setSection(Section);
   appendToUsed(M, NGVE);
-  errs() << "OGVE: " << OGVE << "\n";
-  errs() << "NGVE: " << NGVE << "\n";
   if (OGVE) {
     OGVE->replaceAllUsesWith(NGVE);
     NGVE->takeName(OGVE);
@@ -581,10 +568,12 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   if (!any_isa<const Module *>(IR))
                     return;
                   const auto &M = *any_cast<const Module *>(IR);
-                  // const auto GV = M.getNamedValue("__init_array_start");
-                  // fmt::print(stderr,
-                  //            "after pass: {:s} __init_array_start: {:p}\n",
-                  //            P, fmt::ptr(GV));
+                  const auto GV = M.getNamedValue("__init_tp");
+                  fmt::print(stderr, "after pass: {:s} __init_tp: {:p}\n", P,
+                             fmt::ptr(GV));
+                  if (P == "RequireAnalysisPass<llvm::ProfileSummaryAnalysis, "
+                           "llvm::Module>")
+                    jev::dump_module(M, "mod-pre-break.bc");
                 });
           }};
 }
