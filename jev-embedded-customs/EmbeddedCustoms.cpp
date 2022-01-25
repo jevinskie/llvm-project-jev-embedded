@@ -81,8 +81,8 @@ static const char *libcallRoutineNames[] = {
 };
 
 static std::set<std::string> bannedLibcallRoutineNames{
-    "__gcc_personality_sj0", "__gcc_personality_v0", "__gcc_personality_imp",
-    "readEncodedPointer", // for gcc perso
+    // "__gcc_personality_sj0", "__gcc_personality_v0", "__gcc_personality_imp",
+    // "readEncodedPointer", // for gcc perso
 };
 
 static std::set<std::string> usedNames{
@@ -148,7 +148,7 @@ static void dump_module(const Module &M, StringRef path) {
 
 static std::unique_ptr<Module> load_bc_archive(StringRef ar_path,
                                                LLVMContext &Context) {
-  fmt::print(stderr, "loading {:s}\n", ar_path.str());
+  // fmt::print(stderr, "loading {:s}\n", ar_path.str());
   auto ar_bin = llvm::object::createBinary(ar_path);
   if (Error E = ar_bin.takeError())
     EoE(std::move(E));
@@ -360,7 +360,7 @@ static bool rename_structor_array(const char *Array, const char *NewArray,
 }
 
 static void renameCtorsDtorsArrays(Module &M) {
-  errs() << "renaming ctor/dtor array\n";
+  // errs() << "renaming ctor/dtor array\n";
   rename_structor_array("llvm.global_ctors", "__init_array_embcust",
                         ".init_array_embcust", M);
   rename_structor_array("llvm.global_dtors", "__fini_array_embcust",
@@ -369,8 +369,8 @@ static void renameCtorsDtorsArrays(Module &M) {
 
 static void wrapEntrypoints(const std::string &EntrypointWrapperName,
                             Module &M) {
-  errs() << "wrapping entry points with a call to " << EntrypointWrapperName
-         << "()\n";
+  // errs() << "wrapping entry points with a call to " << EntrypointWrapperName
+  //        << "()\n";
 }
 
 static void GlobalOptHackApply(Module &M) {
@@ -406,7 +406,7 @@ static void GlobalOptHackRemove(Module &M) {
 }
 
 static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
-  errs() << "running embcust " << (opts.Pre ? "pre" : "post") << "\n";
+  // errs() << "running embcust " << (opts.Pre ? "pre" : "post") << "\n";
 
   // get exported syms from newline seperated file (# as first char on line is a
   // comment)
@@ -426,9 +426,25 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
   for (auto &GV : M.global_values()) {
     // if we find a (builtin? not sure) libcall, add it to used or else it may
     // get optimized out but another pass later adds a call
-    bool isLibcall = libcallRoutines.contains(GV.getName().str());
+    const bool isLibcall = libcallRoutines.contains(GV.getName().str());
     if (isLibcall || usedNames.contains(GV.getName().str())) {
       appendToUsed(M, ArrayRef{&GV});
+    }
+
+    if (GV.isDSOLocal())
+      GV.setDSOLocal(false);
+
+    const bool isInExportedList = exported_syms.contains(GV.getName().str());
+
+    if (isInExportedList || GV.isDeclaration())
+      GV.setVisibility(GlobalValue::VisibilityTypes::DefaultVisibility);
+
+    if (GV.isDeclaration()) {
+      GV.setLinkage(LT::ExternalLinkage);
+      GV.setUnnamedAddr(GlobalVariable::UnnamedAddr::None);
+      auto F = dyn_cast<Function>(&GV);
+      if (F && GV.getName() == "__unw_getcontext")
+        F->setAttributes({});
     }
 
     if (
@@ -437,7 +453,7 @@ static bool runEmbeddedCustoms(Module &M, const PassOpts &opts) {
         // don't change visibility on symbols we want exported
         // note we don't force external visibility for these *optionally*
         // exported symbols
-        !exported_syms.contains(GV.getName().str()) &&
+        !isInExportedList &&
         // don't change visibility of symbols in skip list
         !vis_mod_skiplist.contains(GV.getName().str()) &&
         // don't mess with llvm reserved globals, e.g. making llvm.used private
@@ -568,12 +584,13 @@ llvm::PassPluginLibraryInfo getEmbeddedCustomsPluginInfo() {
                   if (!any_isa<const Module *>(IR))
                     return;
                   const auto &M = *any_cast<const Module *>(IR);
-                  const auto GV = M.getNamedValue("__init_tp");
-                  fmt::print(stderr, "after pass: {:s} __init_tp: {:p}\n", P,
-                             fmt::ptr(GV));
-                  if (P == "RequireAnalysisPass<llvm::ProfileSummaryAnalysis, "
-                           "llvm::Module>")
-                    jev::dump_module(M, "mod-pre-break.bc");
+                  // const auto GV = M.getNamedValue("__init_tp");
+                  // fmt::print(stderr, "after pass: {:s} __init_tp: {:p}\n", P,
+                  //            fmt::ptr(GV));
+                  // if (P == "RequireAnalysisPass<llvm::ProfileSummaryAnalysis,
+                  // "
+                  //          "llvm::Module>")
+                  //   jev::dump_module(M, "mod-pre-break.bc");
                 });
           }};
 }
